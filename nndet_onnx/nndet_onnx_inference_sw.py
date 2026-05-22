@@ -6,9 +6,10 @@ with Gaussian score weighting, and post-processes detections.
 """
 
 import argparse
+import json
 import math
 import os
-import pickle as pkl
+import pickle
 import sys
 import time
 from itertools import product
@@ -194,7 +195,7 @@ def preprocess_image(
         print(f"      resampled size (XYZ): {image.GetSize()}  spacing: {tuple(round(s, 4) for s in image.GetSpacing())}", flush=True)
         print(f"                intensity range: [{_sf.GetMinimum():.1f}, {_sf.GetMaximum():.1f}]  mean: {_sf.GetMean():.1f}  std: {_sf.GetSigma():.1f}", flush=True)
 
-    intensity = plan_inference["dataset_properties"]["intensity_properties"][0]
+    intensity = plan_inference["intensity_properties"]
     image = clip_image(
         image,
         lower=intensity["percentile_00_5"],
@@ -371,12 +372,14 @@ def create_session(
     provider_options: list = []
     for prov in providers:
         if prov == "TensorrtExecutionProvider":
-            cache_dir = str(Path(model_path).parent / "trt_engine_cache")
+            precision = "fp16" if trt_fp16 else "fp32"
+            cache_dir = str(Path(model_path).parent / f"trt_engine_cache_{precision}")
             os.makedirs(cache_dir, exist_ok=True)
             provider_options.append({
                 "trt_engine_cache_enable": "True",
                 "trt_engine_cache_path": cache_dir,
                 "trt_fp16_enable": "True" if trt_fp16 else "False",
+                "trt_timing_cache_enable": "True",
             })
         elif prov == "OpenVINOExecutionProvider":
             provider_options.append({"device_type": "CPU"})
@@ -430,11 +433,7 @@ def translate_boxes(
     oz, oy, ox = offset_zyx
     # dim0=Z → oz, dim1=Y → oy, dim2=X → ox
     shift = np.array([oz, oy, oz, oy, ox, ox], dtype=np.float32)
-    return {
-        "boxes": detection["boxes"] + shift,
-        "scores": detection["scores"],
-        "labels": detection["labels"],
-    }
+    return {**detection, "boxes": detection["boxes"] + shift}
 
 
 # ---------------------------------------------------------------------------
@@ -479,8 +478,14 @@ def nms_nndet(
     detection: Dict[str, np.ndarray],
     iou_threshold: float,
 ) -> Dict[str, np.ndarray]:
-    import torch
-    from nndet.core.boxes import nms
+    try:
+        import torch
+        from nndet.core.boxes import nms
+    except ImportError:
+        raise RuntimeError(
+            "nms_backend='nndet' requires torch and nndet packages. "
+            "Install them or use --nms-backend numpy instead."
+        )
 
     if len(detection["boxes"]) == 0:
         return detection
@@ -578,10 +583,10 @@ def merge_detections(
         return {"boxes": np.empty((0, 6), np.float32),
                 "scores": np.empty((0,), np.float32),
                 "labels": np.empty((0,), np.int64)}
+    keys = all_detections[0].keys()
     return {
-        "boxes": np.concatenate([d["boxes"] for d in all_detections], axis=0),
-        "scores": np.concatenate([d["scores"] for d in all_detections], axis=0),
-        "labels": np.concatenate([d["labels"] for d in all_detections], axis=0),
+        k: np.concatenate([d[k] for d in all_detections], axis=0)
+        for k in keys
     }
 
 
@@ -611,6 +616,191 @@ def detections_to_mask(
     return sitk.ConnectedComponent(mask_sitk)
 
 
+def resample_mask_to_reference(mask: sitk.Image, reference_path: str) -> sitk.Image:
+    """Resample a label mask to match the geometry of a reference image.
+
+    Uses nearest-neighbor interpolation to preserve integer labels.
+    The reference image header is read without loading pixel data.
+    """
+    reader = sitk.ImageFileReader()
+    reader.SetFileName(reference_path)
+    reader.ReadImageInformation()
+
+    resampler = sitk.ResampleImageFilter()
+    resampler.SetOutputSpacing(reader.GetSpacing())
+    resampler.SetSize(reader.GetSize())
+    resampler.SetOutputDirection(reader.GetDirection())
+    resampler.SetOutputOrigin(reader.GetOrigin())
+    resampler.SetInterpolator(sitk.sitkNearestNeighbor)
+    resampler.SetDefaultPixelValue(0)
+    resampler.SetTransform(sitk.Transform())
+    return resampler.Execute(mask)
+
+
+def read_image_metadata(image_path: str) -> dict:
+    """Read image metadata without loading pixel data (header only)."""
+    reader = sitk.ImageFileReader()
+    reader.SetFileName(image_path)
+    reader.ReadImageInformation()
+    return {
+        "size_xyz": reader.GetSize(),
+        "spacing_xyz": reader.GetSpacing(),
+        "origin": reader.GetOrigin(),
+        "direction": reader.GetDirection(),
+    }
+
+
+def export_detections_json(
+    detection: Dict[str, np.ndarray],
+    output_path: str,
+    ref_meta: dict,
+    current_meta: dict = None,
+) -> None:
+    """Export detections in nnDetection JSON format.
+
+    *ref_meta* is a dict with keys ``size_xyz``, ``spacing_xyz``,
+    ``origin``, ``direction`` describing the target coordinate space
+    (typically the original image, obtained via :func:`read_image_metadata`).
+    This metadata is written into the output JSON.
+
+    If *current_meta* is also provided, boxes are scaled from the
+    current voxel space (resampled) to the reference voxel space.
+    If None, boxes are exported as-is (already in reference space).
+    """
+    ref_spacing_xyz = ref_meta["spacing_xyz"]
+
+    boxes = detection["boxes"]
+    if current_meta is not None and len(boxes) > 0:
+        cur_spacing_xyz = current_meta["spacing_xyz"]
+        if cur_spacing_xyz != ref_spacing_xyz:
+            scale_d0 = cur_spacing_xyz[2] / ref_spacing_xyz[2]  # Z
+            scale_d1 = cur_spacing_xyz[1] / ref_spacing_xyz[1]  # Y
+            scale_d2 = cur_spacing_xyz[0] / ref_spacing_xyz[0]  # X
+            scale = np.array(
+                [scale_d0, scale_d1, scale_d0, scale_d1, scale_d2, scale_d2],
+                dtype=np.float32,
+            )
+            boxes = boxes * scale
+
+    data = {
+        "pred_boxes": boxes.tolist(),
+        "pred_scores": detection["scores"].tolist(),
+        "pred_labels": detection["labels"].tolist(),
+        "restore": True,
+        "original_size_of_raw_data": list(reversed(ref_meta["size_xyz"])),
+        "itk_origin": list(ref_meta["origin"]),
+        "itk_spacing": list(ref_spacing_xyz),
+        "itk_direction": list(ref_meta["direction"]),
+    }
+    with open(output_path, "w") as f:
+        json.dump(data, f, indent=4)
+
+
+def export_detections_pkl(
+    detection: Dict[str, np.ndarray],
+    output_path: str,
+    ref_meta: dict,
+    current_meta: dict = None,
+) -> None:
+    """Export detections as a pickle file compatible with nnDetection CLI tools.
+
+    Same coordinate scaling logic as :func:`export_detections_json`.
+    Arrays use numpy dtypes expected by nnDetection (float32, int64).
+    """
+    ref_spacing_xyz = ref_meta["spacing_xyz"]
+
+    boxes = detection["boxes"]
+    if current_meta is not None and len(boxes) > 0:
+        cur_spacing_xyz = current_meta["spacing_xyz"]
+        if cur_spacing_xyz != ref_spacing_xyz:
+            scale_d0 = cur_spacing_xyz[2] / ref_spacing_xyz[2]  # Z
+            scale_d1 = cur_spacing_xyz[1] / ref_spacing_xyz[1]  # Y
+            scale_d2 = cur_spacing_xyz[0] / ref_spacing_xyz[0]  # X
+            scale = np.array(
+                [scale_d0, scale_d1, scale_d0, scale_d1, scale_d2, scale_d2],
+                dtype=np.float32,
+            )
+            boxes = boxes * scale
+
+    data = {
+        "pred_boxes": np.asarray(boxes, dtype=np.float32),
+        "pred_scores": np.asarray(detection["scores"], dtype=np.float32),
+        "pred_labels": np.asarray(detection["labels"], dtype=np.int64),
+        "restore": True,
+        "original_size_of_raw_data": np.array(list(reversed(ref_meta["size_xyz"])), dtype=np.int64),
+        "itk_origin": [float(x) for x in ref_meta["origin"]],
+        "itk_spacing": [float(x) for x in ref_spacing_xyz],
+        "itk_direction": [float(x) for x in ref_meta["direction"]],
+    }
+    with open(output_path, "wb") as f:
+        pickle.dump(data, f)
+
+
+def export_detections_csv(
+    detection: Dict[str, np.ndarray],
+    output_path: str,
+    image_name: str,
+    ref_meta: dict,
+    current_meta: dict = None,
+) -> None:
+    """Export detections as CSV with one row per detection.
+
+    Columns: image_name, detection_id, label, score,
+    voxel coords (z/y/x min/max in ref space), world center (mm),
+    physical size (mm) and volume (mm^3).
+
+    Coordinate scaling from *current_meta* to *ref_meta* follows the
+    same logic as :func:`export_detections_json`.
+    """
+    ref_spacing_xyz = ref_meta["spacing_xyz"]
+    origin = ref_meta["origin"]  # (X, Y, Z)
+
+    boxes = detection["boxes"]
+    if current_meta is not None and len(boxes) > 0:
+        cur_spacing_xyz = current_meta["spacing_xyz"]
+        if cur_spacing_xyz != ref_spacing_xyz:
+            scale_d0 = cur_spacing_xyz[2] / ref_spacing_xyz[2]  # Z
+            scale_d1 = cur_spacing_xyz[1] / ref_spacing_xyz[1]  # Y
+            scale_d2 = cur_spacing_xyz[0] / ref_spacing_xyz[0]  # X
+            scale = np.array(
+                [scale_d0, scale_d1, scale_d0, scale_d1, scale_d2, scale_d2],
+                dtype=np.float32,
+            )
+            boxes = boxes * scale
+
+    header = (
+        "image_name,detection_id,label,score,"
+        "z_min,y_min,x_min,z_max,y_max,x_max,"
+        "center_x_mm,center_y_mm,center_z_mm,"
+        "size_x_mm,size_y_mm,size_z_mm,volume_mm3\n"
+    )
+    with open(output_path, "w") as f:
+        f.write(header)
+        for i, (box, score, label) in enumerate(
+            zip(boxes, detection["scores"], detection["labels"]),
+        ):
+            d0a, d1a, d0b, d1b, d2a, d2b = box
+            # Voxel centers
+            cz = (d0a + d0b) / 2.0
+            cy = (d1a + d1b) / 2.0
+            cx = (d2a + d2b) / 2.0
+            # World coordinates (origin is XYZ)
+            wx = origin[0] + cx * ref_spacing_xyz[0]
+            wy = origin[1] + cy * ref_spacing_xyz[1]
+            wz = origin[2] + cz * ref_spacing_xyz[2]
+            # Physical sizes
+            sz_x = (d2b - d2a) * ref_spacing_xyz[0]
+            sz_y = (d1b - d1a) * ref_spacing_xyz[1]
+            sz_z = (d0b - d0a) * ref_spacing_xyz[2]
+            vol = sz_x * sz_y * sz_z
+            f.write(
+                f"{image_name},{i + 1},{int(label)},{score:.4f},"
+                f"{d0a:.1f},{d1a:.1f},{d2a:.1f},{d0b:.1f},{d1b:.1f},{d2b:.1f},"
+                f"{wx:.1f},{wy:.1f},{wz:.1f},"
+                f"{sz_x:.1f},{sz_y:.1f},{sz_z:.1f},{vol:.1f}\n"
+            )
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -622,9 +812,10 @@ def main() -> None:
 
     # Paths
     parser.add_argument("--model-path", required=True, help="Path to model_onnx.onnx")
-    parser.add_argument("--plan-path", required=True, help="Path to plan_inference.pkl")
-    parser.add_argument("--image-path", help="Path to input NIfTI image")
-    parser.add_argument("--output", help="Output detection mask (.nii.gz)")
+    parser.add_argument("--plan-path", required=True, help="Path to plan_inference.json")
+    parser.add_argument("--image-path", help="Path to a single input NIfTI image")
+    parser.add_argument("--image-dir", help="Path to a directory of NIfTI images (batch mode)")
+    parser.add_argument("--output-dir", help="Output directory for results (mask, JSON, CSV)")
 
     # Sliding window
     parser.add_argument(
@@ -658,8 +849,48 @@ def main() -> None:
         "--build-engine-only", action="store_true",
         help="Build TRT engine cache and exit (no inference)",
     )
+    parser.add_argument(
+        "--export-pkl", action="store_true",
+        help="Also export detections as .pkl (nnDetection-compatible, for validation)",
+    )
 
     args = parser.parse_args()
+
+    # ---- Input validation ----
+    model_path = Path(args.model_path)
+    plan_path = Path(args.plan_path)
+
+    if not model_path.is_file():
+        sys.exit(f"Error: model not found: {args.model_path}")
+    if model_path.suffix != ".onnx":
+        sys.exit(f"Error: model must be .onnx, got: {model_path.suffix}")
+    if not plan_path.is_file():
+        sys.exit(f"Error: plan not found: {args.plan_path}")
+    if plan_path.suffix != ".json":
+        sys.exit(f"Error: plan must be .json, got: {plan_path.suffix}")
+
+    if not args.build_engine_only:
+        if args.image_path and args.image_dir:
+            sys.exit("Error: --image-path and --image-dir are mutually exclusive")
+        if not args.image_path and not args.image_dir:
+            sys.exit("Error: --image-path or --image-dir is required for inference")
+        if not args.output_dir:
+            sys.exit("Error: --output-dir is required for inference")
+        if args.image_path:
+            image_path = Path(args.image_path)
+            if not image_path.is_file():
+                sys.exit(f"Error: image not found: {args.image_path}")
+            if not (image_path.name.endswith(".nii") or image_path.name.endswith(".nii.gz")):
+                sys.exit(f"Error: image must be .nii or .nii.gz, got: {image_path.name}")
+        if args.image_dir:
+            image_dir = Path(args.image_dir)
+            if not image_dir.is_dir():
+                sys.exit(f"Error: image directory not found: {args.image_dir}")
+
+    if not 0.0 <= args.overlap < 1.0:
+        sys.exit(f"Error: --overlap must be in [0, 1), got: {args.overlap}")
+    if not 0.0 <= args.score_thresh <= 1.0:
+        sys.exit(f"Error: --score-thresh must be in [0, 1], got: {args.score_thresh}")
 
     # ---- Print all parameters (including defaults) ----
     defaults = {a.dest: a.default for a in parser._actions if a.default is not argparse.SUPPRESS}
@@ -674,20 +905,25 @@ def main() -> None:
         print(f"  --{name.replace('_', '-')} : {value}{tag}", flush=True)
     print(flush=True)
 
-    # ---- Load configs ----
-    with open(args.plan_path, "rb") as f:
-        plan_inference = pkl.load(f)
+    # ---- Load config (JSON only) ----
+    with open(args.plan_path, "r") as f:
+        plan_inference = json.load(f)
+    print(f"      config loaded from: {args.plan_path}", flush=True)
+
 
     patch_size = tuple(plan_inference["patch_size"])  # Z, Y, X
 
     # Read batch_size from ONNX model input shape (dim 0 of 'images')
+    # TRT status message (cache hit or cold compile)
     if args.backend == "trt":
-        cache_dir = Path(args.model_path).parent / "trt_engine_cache"
+        precision = "fp16" if args.trt_fp16 else "fp32"
+        cache_dir = Path(args.model_path).parent / f"trt_engine_cache_{precision}"
         has_cache = cache_dir.exists() and any(cache_dir.glob("*.engine"))
         if has_cache:
-            print(f"      Loading TensorRT session (using cached engines from {cache_dir}) …", flush=True)
+            print(f"      Loading TensorRT session ({precision}, cached engines from {cache_dir}) …", flush=True)
         else:
-            print("      Creating TensorRT session (no cache found, compiling engines — this may take several minutes) …", flush=True)
+            print(f"      Creating TensorRT session ({precision}, no cache found, compiling engines — this may take several minutes) …", flush=True)
+    # ---- Create session (all backends) ----
     t_session = time.time()
     session = create_session(args.model_path, args.backend, args.trt_fp16)
     batch_size: int = session.get_inputs()[0].shape[0]
@@ -697,42 +933,114 @@ def main() -> None:
         print("\nEngine built and cached. Exiting.", flush=True)
         return
 
-    if not args.image_path or not args.output:
-        parser.error("--image-path and --output are required for inference")
-
     iou_threshold = args.iou_threshold
     if iou_threshold is None:
         iou_threshold = plan_inference["inference_plan"]["model_iou"]
         print(f"      iou-threshold not specified, using plan value: {iou_threshold}\n", flush=True)
 
-    t_total = time.time()
-
-    # ---- Anchors ----
+    # ---- Anchors (shared across all images) ----
     print("[1/5] Computing anchors …", flush=True)
     t0 = time.time()
     anchors_batch = compute_anchors(plan_inference, patch_size, batch_size)
     print(f"      anchors shape: {anchors_batch.shape}  ({time.time() - t0:.2f}s)", flush=True)
 
+    # ---- Collect image paths ----
+    if args.image_dir:
+        image_dir = Path(args.image_dir)
+        image_paths = sorted(
+            [p for p in image_dir.iterdir()
+             if p.name.endswith(".nii") or p.name.endswith(".nii.gz")]
+        )
+        if not image_paths:
+            sys.exit(f"Error: no .nii or .nii.gz files found in {args.image_dir}")
+        print(f"\n      Found {len(image_paths)} images in {args.image_dir}\n", flush=True)
+    else:
+        image_paths = [Path(args.image_path)]
+
+    t_total = time.time()
+    summary = []
+
+    for img_idx, img_path in enumerate(image_paths):
+        image_name = img_path.stem.replace(".nii", "")
+        if len(image_paths) > 1:
+            print(f"\n{'='*60}", flush=True)
+            print(f"  Image {img_idx + 1}/{len(image_paths)}: {img_path.name}", flush=True)
+            print(f"{'='*60}", flush=True)
+
+        result = process_single_image(
+            session=session,
+            image_path=str(img_path),
+            output_dir=Path(args.output_dir),
+            plan_inference=plan_inference,
+            patch_size=patch_size,
+            batch_size=batch_size,
+            anchors_batch=anchors_batch,
+            iou_threshold=iou_threshold,
+            overlap=args.overlap,
+            score_thresh=args.score_thresh,
+            min_size_mm=args.min_size_mm,
+            nms_backend=args.nms_backend,
+            no_global_nms=args.no_global_nms,
+            export_pkl=args.export_pkl,
+        )
+        summary.append((image_name, result))
+
+    if len(image_paths) > 1:
+        print(f"\n{'='*60}", flush=True)
+        print(f"  Summary: {len(image_paths)} images processed", flush=True)
+        for name, n_det in summary:
+            print(f"    {name}: {n_det} detections", flush=True)
+
+    print(f"\nDone. Total time: {time.time() - t_total:.2f}s", flush=True)
+
+
+def process_single_image(
+    session,
+    image_path: str,
+    output_dir: Path,
+    plan_inference: dict,
+    patch_size: tuple,
+    batch_size: int,
+    anchors_batch: np.ndarray,
+    iou_threshold: float,
+    overlap: float,
+    score_thresh: float,
+    min_size_mm: float,
+    nms_backend: str,
+    no_global_nms: bool,
+    export_pkl: bool,
+) -> int:
+    """Process a single image through the full pipeline. Returns detection count."""
+
+    image_name = Path(image_path).stem.replace(".nii", "")
+
     # ---- Preprocessing ----
     print("[2/5] Preprocessing image …", flush=True)
     t0 = time.time()
-    preprocessed = preprocess_image(args.image_path, plan_inference)
+    preprocessed = preprocess_image(image_path, plan_inference)
     volume = sitk.GetArrayFromImage(preprocessed)  # (Z, Y, X)
     image_shape = volume.shape
     spacing_xyz = preprocessed.GetSpacing()
     print(f"      preprocessing done  ({time.time() - t0:.2f}s)", flush=True)
 
+    for dim_name, img_s, pat_s in zip(("Z", "Y", "X"), image_shape, patch_size):
+        if img_s < pat_s:
+            sys.exit(
+                f"Error: resampled image {dim_name} dimension ({img_s}) is smaller "
+                f"than patch_size ({pat_s}). Cannot run sliding window."
+            )
+
     # ---- Sliding window positions ----
     print("[3/5] Building sliding window positions …", flush=True)
     t0 = time.time()
-    positions, step_sizes = compute_patch_positions(image_shape, patch_size, args.overlap)
+    positions, step_sizes = compute_patch_positions(image_shape, patch_size, overlap)
     actual_overlap = tuple(
         round(1.0 - s / p, 4) if p > 0 else 0.0
         for s, p in zip(step_sizes, patch_size)
     )
     n_patches = len(positions)
     n_batches = math.ceil(n_patches / batch_size)
-    print(f"      step sizes (ZYX): ({step_sizes[0]:.1f}, {step_sizes[1]:.1f}, {step_sizes[2]:.1f})  actual overlap: {actual_overlap}  (requested: {args.overlap})", flush=True)
+    print(f"      step sizes (ZYX): ({step_sizes[0]:.1f}, {step_sizes[1]:.1f}, {step_sizes[2]:.1f})  actual overlap: {actual_overlap}  (requested: {overlap})", flush=True)
     print(f"      {n_patches} patches, {n_batches} batches (batch_size={batch_size})  ({time.time() - t0:.2f}s)", flush=True)
 
     # ---- Inference ----
@@ -774,16 +1082,20 @@ def main() -> None:
             det = postprocess(
                 det,
                 spacing_xyz=spacing_xyz,
-                score_thresh=args.score_thresh,
-                min_size_mm=args.min_size_mm,
+                score_thresh=score_thresh,
+                min_size_mm=min_size_mm,
                 iou_threshold=iou_threshold,
-                nms_backend=args.nms_backend,
+                nms_backend=nms_backend,
             )
 
-            # Gaussian score weighting
+            # Gaussian score weighting (for NMS only — originals kept for export)
             if len(det["boxes"]) > 0:
                 weights = gaussian_weight_for_boxes(det["boxes"], patch_size)
-                det = {**det, "scores": det["scores"] * weights}
+                det = {
+                    **det,
+                    "scores": det["scores"] * weights,
+                    "scores_original": det["scores"].copy(),
+                }
 
             # Translate to global coordinates
             det = translate_boxes(det, batch_positions[i])
@@ -815,21 +1127,67 @@ def main() -> None:
     merged = merge_detections(all_detections)
     print(f"      total detections before global NMS: {len(merged['boxes'])}", flush=True)
 
-    if not args.no_global_nms and len(merged["boxes"]) > 0:
-        merged = apply_nms(merged, iou_threshold, args.nms_backend)
+    if not no_global_nms and len(merged["boxes"]) > 0:
+        merged = apply_nms(merged, iou_threshold, nms_backend)
         print(f"      detections after global NMS:        {len(merged['boxes'])}  ({time.time() - t0:.2f}s)", flush=True)
-    elif args.no_global_nms:
+    elif no_global_nms:
         print(f"      global NMS disabled  ({time.time() - t0:.2f}s)", flush=True)
     else:
         print(f"      no detections  ({time.time() - t0:.2f}s)", flush=True)
 
+    # Restore original (unweighted) scores for export
+    if "scores_original" in merged:
+        merged["scores"] = merged.pop("scores_original")
+
     # ---- Export ----
     t0 = time.time()
-    cc = detections_to_mask(merged, image_shape, preprocessed)
-    sitk.WriteImage(cc, args.output)
-    print(f"      saved → {args.output}  ({time.time() - t0:.2f}s)", flush=True)
+    os.makedirs(output_dir, exist_ok=True)
 
-    print(f"\nDone. Total time: {time.time() - t_total:.2f}s", flush=True)
+    mask_path = str(output_dir / f"{image_name}_mask.nii.gz")
+    cc = detections_to_mask(merged, image_shape, preprocessed)
+    cc = resample_mask_to_reference(cc, image_path)
+    sitk.WriteImage(cc, mask_path)
+    print(f"      mask  \u2192 {mask_path}", flush=True)
+
+    # ---- Export detections JSON (nnDetection format) ----
+    json_path = str(output_dir / f"{image_name}_boxes.json")
+
+    orig_meta = read_image_metadata(image_path)
+    resampled_meta = {
+        "size_xyz": preprocessed.GetSize(),
+        "spacing_xyz": preprocessed.GetSpacing(),
+        "origin": preprocessed.GetOrigin(),
+        "direction": preprocessed.GetDirection(),
+    }
+    export_detections_json(
+        merged, json_path,
+        ref_meta=orig_meta,
+        current_meta=resampled_meta,
+    )
+    print(f"      boxes \u2192 {json_path}", flush=True)
+
+    csv_path = str(output_dir / f"{image_name}_boxes.csv")
+    export_detections_csv(
+        merged, csv_path,
+        image_name=image_name,
+        ref_meta=orig_meta,
+        current_meta=resampled_meta,
+    )
+    print(f"      csv   \u2192 {csv_path}", flush=True)
+
+    if export_pkl:
+        pkl_path = str(output_dir / f"{image_name}_boxes.pkl")
+        export_detections_pkl(
+            merged, pkl_path,
+            ref_meta=orig_meta,
+            current_meta=resampled_meta,
+        )
+        print(f"      pkl   \u2192 {pkl_path}", flush=True)
+
+    print(f"      exports done  ({time.time() - t0:.2f}s)", flush=True)
+
+    n_detections = len(merged["boxes"])
+    return n_detections
 
 
 if __name__ == "__main__":

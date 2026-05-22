@@ -1,0 +1,12 @@
+# Data folder (models, images, TRT cache — too large, provided separately)
+data/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db
