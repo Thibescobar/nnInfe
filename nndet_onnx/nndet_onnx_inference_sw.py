@@ -9,7 +9,6 @@ import argparse
 import json
 import math
 import os
-import pickle
 import sys
 import time
 from itertools import product
@@ -731,6 +730,7 @@ def export_detections_pkl(
         "itk_direction": [float(x) for x in ref_meta["direction"]],
     }
     with open(output_path, "wb") as f:
+        import pickle
         pickle.dump(data, f)
 
 

@@ -1,5 +1,5 @@
 # Notes de projet — nnDet ONNX Inference Pipeline
-> Dernière mise à jour : 2026-05-22
+> Dernière mise à jour : 2026-05-29
 
 Pipeline d'inférence standalone pour **nnDet** (détection 3D médicale) exporté en ONNX.
 But final : **port C++** avec ITK + ONNX Runtime / TensorRT natif.
@@ -64,7 +64,7 @@ Le script Python sert de **prototype de référence** et de **spécification fon
 - **Batch multi-images** : `--image-dir`, session + anchors partagés, résumé final
 - **`process_single_image()`** extraite de `main()` pour le batch
 - **`nms_nndet`** : `try/except ImportError` avec message clair
-- **Arborescence projet** : `/home/eqip/nndet_onnx/` (tools, data, notes, tests)
+- **Arborescence projet** : tools, data, notes, tests
 - Script principal : **~1162 lignes** (contre ~838 à la Phase 8)
 
 ---
@@ -73,10 +73,10 @@ Le script Python sert de **prototype de référence** et de **spécification fon
 
 ### Modèle nnDet
 - **Architecture** : RetinaUNet 3D, batch_size fixe = 4
-- **Input ONNX** : `images` [4, 1, 64, 96, 96], `anchors` [4, 284796, 6]
+- **Input ONNX** : `images` [4, 1, Z, Y, X], `anchors` [:, :, :]
 - **Output ONNX** : 12 tenseurs (4×boxes + 4×scores + 4×labels)
-- **patch_size** (ZYX) : [64, 96, 96]
-- **NMS IoU threshold** : 0.1 (depuis `plan_inference["inference_plan"]["model_iou"]`)
+- **patch_size** (ZYX) : [Z, Y, X]
+- **NMS IoU threshold** : `plan_inference["inference_plan"]["model_iou"]`
 
 ### Convention d'axes — source de tous les bugs historiques
 - **nnDet** : `dim0=Z, dim1=Y, dim2=X`
@@ -126,7 +126,7 @@ Pour le C++, on veut un **engine TRT unique** (pas le cache multi-engine d'ORT).
 | Parallélisme ORT | Par défaut utilise tous les cœurs, correct pour mono-session | Multi-GPU / pipeline |
 | Global NMS O(n²) | ~110 détections = négligeable | Si n >> 1000 |
 | Dict pour détections | Préférence utilisateur | `struct` en C++ |
-| Code commenté `filter_small_boxes` | Legacy pour l'équipe (ancienne version buggée) | Supprimer avant livraison externe |
+| Code commenté `filter_small_boxes` | Legacy reference (pre-axis-fix version) | Clean up in future refactor |
 | 3 dépendances | numpy, onnxruntime, SimpleITK — toutes indispensables | — |
 
 ---
@@ -136,7 +136,7 @@ Pour le C++, on veut un **engine TRT unique** (pas le cache multi-engine d'ORT).
 > Lire cette section en entier avant toute action dans une nouvelle conversation.
 
 ### Ce qu'il reste
-- [ ] **Tests unitaires** : pytest, fixtures synthétiques, coverage sur anchors, IoU, NMS, axes, sliding window
+- [x] **Tests unitaires** : pytest, fixtures synthétiques, coverage sur anchors, IoU, NMS, axes, sliding window (65 tests, 42% coverage)
 
 ### Reporté post-MVP (avant production)
 - [ ] **Logging structuré** : remplacer `print()` par `logging` avec niveaux (DEBUG/INFO/WARNING)
@@ -146,31 +146,19 @@ Pour le C++, on veut un **engine TRT unique** (pas le cache multi-engine d'ORT).
 
 ### Fichiers et chemins
 
-**Projet (`/home/eqip/nndet_onnx/`)**
+**Project structure**
 
 | Fichier | Chemin | Rôle |
 |---------|--------|------|
-| Script principal | `nndet_onnx_inference_sw.py` (~1195 lignes) | Pipeline complet |
-| Converter pkl→JSON | `tools/nndet_pkl_to_json.py` (113 lignes) | One-shot |
-| Shape inference | `tools/nndet_onnx_shape_inference.py` (66 lignes) | One-shot, requis pour TRT |
-| Notes | `notes/NOTES_REVIEW_SW.md` | Ce fichier |
-| Modèle ONNX | `data/model/model_onnx.onnx` | Modèle original |
-| Modèle shaped | `data/model/model_onnx_shaped.onnx` | Requis pour TRT |
-| Plan inference | `data/model/plan_inference.json` | Config (converti du pkl) |
-| Cache TRT | `data/model/trt_engine_cache_fp16/` | Engines compilés |
-| Image test | `data/test_images/1_AV_LA.nii.gz` | CT scan NIfTI |
-| Batch test | `data/test_images/1_AV_LA/` | 3 copies pour test batch |
+| Script principal | `nndet_onnx/nndet_onnx_inference_sw.py` (~1195 lignes) | Pipeline complet |
+| Converter pkl→JSON | `nndet_onnx/tools/nndet_pkl_to_json.py` (113 lignes) | One-shot |
+| Shape inference | `nndet_onnx/tools/nndet_onnx_shape_inference.py` (66 lignes) | One-shot, requis pour TRT |
+| Notes | `nndet_onnx/notes/NOTES_REVIEW_SW.md` | Ce fichier |
+| Tests | `tests/` (4 fichiers, 65 tests) | pytest + pytest-cov |
 
-**Sources (disque externe `/media/eqip/T9/`)**
+**Data files (not versioned)**
 
-| Fichier | Chemin |
-|---------|--------|
-| Modèle ONNX shaped | `le/repos_Git/repos_GB/fold0/model_onnx_shaped.onnx` |
-| Plan pkl (source) | `le/repos_Git/repos_GB/fold0/plan_inference.pkl` |
-| Cache TRT (33 engines) | `le/repos_Git/repos_GB/fold0/trt_engine_cache/` |
-| Image test (source) | `datasets__storage/SATT/BDD/1_AV_LA/1_AV_LA.nii.gz` |
-
-Originaux du développement conservés dans `/home/eqip/Downloads/`.
+Model files (`.onnx`, `plan_inference.json`) and test images are passed via CLI arguments. See the README for details.
 
 ### Commandes de test
 
@@ -210,10 +198,9 @@ python tools/nndet_onnx_shape_inference.py --input data/model/model_onnx.onnx --
 python tools/nndet_pkl_to_json.py --pkl /path/to/plan_inference.pkl --output data/model/plan_inference.json
 ```
 
-> Toutes les commandes supposent `cd /home/eqip/nndet_onnx/`.
+> Toutes les commandes supposent d'être à la racine du projet. Depuis le package installé, utiliser `nndet-infer` directement.
 
 ### Système
 - **Machine** : Dell XPS 8950, Ubuntu 22.04
 - **GPU** : NVIDIA RTX 3070 (8 Go, sm86), driver 535.309
 - **CUDA toolkit** : 11.7 (`nvcc`)
-- **Disque externe** : `/media/eqip/T9/`
