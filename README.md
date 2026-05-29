@@ -10,7 +10,7 @@
 Standalone inference pipeline for **nnDetection** (3D medical object detection) exported to ONNX.
 Runs a RetinaUNet 3D model with sliding window on NIfTI CT volumes, without any dependency on nnDetection or PyTorch.
 
-> **Goal**: This Python prototype serves as the functional specification for a future **C++ port** using ITK + ONNX Runtime / TensorRT native.
+> **Goal**: This Python project serves as the functional specification for a future **C++ port** using ITK + ONNX Runtime / TensorRT. It could be used as is as well because self-contained.
 
 ---
 
@@ -62,40 +62,20 @@ mvpDet/
 
 ### `data/` folder (external, not versioned)
 
-The `data/` folder contains large binary files (models, images, TRT cache) and is **excluded from the git repository**. It must be provided separately when setting up a new environment.
+All file paths are passed via CLI arguments (`--model-path`, `--plan-path`, `--image-path`, etc.), so **you can store your model and images anywhere on your system**. The `data/` folder inside `nndet_onnx/` is simply a convenience location used during development and is excluded from the git repository.
 
-Expected structure:
+Required files to run inference:
+- An ONNX model file (`.onnx`) — passed via `--model-path`
+- An inference config (`plan_inference.json`) — passed via `--plan-path`
 
-```
-data/
-├── model/
-│   ├── model_onnx.onnx               # Original ONNX export (~343 MB)
-│   ├── model_onnx_shaped.onnx        # With intermediate shapes, required for TRT backend (~343 MB)
-│   ├── plan_inference.json            # Inference config (patch_size, spacing, anchors, NMS threshold)
-│   └── trt_engine_cache_fp16/         # TensorRT compiled engines (machine-specific, auto-generated)
-│       ├── *.engine                   # One engine per subgraph (sm86, fp16)
-│       ├── *.profile                  # Optimization profiles
-│       └── *.timing                   # Timing cache
-└── test_images/
-    ├── <image_name>.nii.gz            # Single NIfTI image for --image-path
-    └── <image_dir>/                   # Directory of NIfTI images for --image-dir (batch mode)
-        ├── image1.nii.gz
-        ├── image2.nii.gz
-        └── ...
-```
-
-**Required files** to run inference:
-- `data/model/model_onnx.onnx` (or `model_onnx_shaped.onnx` for TRT backend)
-- `data/model/plan_inference.json`
-
-**Auto-generated** (created at first TRT run):
-- `data/model/trt_engine_cache_fp16/` — compiled engines, specific to GPU architecture (e.g. sm86 for RTX 3070). Regenerated automatically if missing, first run takes several minutes.
+Optional / auto-generated:
+- `trt_engine_cache_fp16/` — TensorRT compiled engines, created automatically next to the model on first TRT run. Specific to GPU architecture (e.g. sm86 for RTX 3070), regenerated if missing.
 
 ---
 
 ## Requirements
 
-- Python 3.9
+- Python ≥ 3.9
 - numpy
 - SimpleITK
 - onnxruntime (variant depends on backend, see [Installation](#installation))
@@ -147,6 +127,7 @@ EOF
 Supports backends: `cpu`, `cuda`, `trt`.
 
 ### Validated Configuration
+This corresponds to the configuration on which this repository was developed and tested. It is entirely possible that it will work perfectly on a different configuration!
 
 | Component | Version |
 |-----------|---------|
@@ -157,37 +138,64 @@ Supports backends: `cpu`, `cuda`, `trt`.
 | TensorRT | 10.3 |
 | Python | 3.9 |
 
+> **Tip:** If you want a single unified environment with all backends, you can [build ONNX Runtime from source](https://onnxruntime.ai/docs/build/) with multiple execution providers enabled (e.g. `--use_cuda --use_tensorrt --use_openvino`).
+
 ---
 
 ## Quick Start
 
+### 1. Prepare model files (if needed)
+
+Convert the inference plan from nnDetection's pickle format to JSON:
+
 ```bash
-cd /home/eqip/nndet_onnx
+python nndet_onnx/tools/nndet_pkl_to_json.py \
+  --pkl /path/to/plan_inference.pkl \
+  --output /path/to/plan_inference.json
+```
 
-# Single image, TRT FP16 (fastest)
+Add intermediate shapes to the ONNX model (required for TRT backend):
+
+```bash
+python nndet_onnx/tools/nndet_onnx_shape_inference.py \
+  --input /path/to/model_onnx.onnx \
+  --output /path/to/model_onnx_shaped.onnx
+```
+
+### 2. Run inference
+
+Single image with TRT FP16 (fastest):
+
+```bash
 conda activate nnDetPy39-trt
-python nndet_onnx_inference_sw.py \
-  --model-path data/model/model_onnx_shaped.onnx \
-  --plan-path data/model/plan_inference.json \
-  --image-path data/test_images/1_AV_LA.nii.gz \
-  --output-dir data/test_images/1_AV_LA_results \
+nndet-infer \
+  --model-path /path/to/model_onnx_shaped.onnx \
+  --plan-path /path/to/plan_inference.json \
+  --image-path /path/to/image.nii.gz \
+  --output-dir /path/to/output \
   --backend trt --trt-fp16
+```
 
-# Batch mode (all NIfTI in a directory)
-python nndet_onnx_inference_sw.py \
-  --model-path data/model/model_onnx_shaped.onnx \
-  --plan-path data/model/plan_inference.json \
-  --image-dir data/test_images/1_AV_LA \
-  --output-dir data/test_images/1_AV_LA_results_batch \
+Batch mode (all NIfTI in a directory):
+
+```bash
+nndet-infer \
+  --model-path /path/to/model_onnx_shaped.onnx \
+  --plan-path /path/to/plan_inference.json \
+  --image-dir /path/to/images/ \
+  --output-dir /path/to/output \
   --backend trt --trt-fp16
+```
 
-# CPU only (no GPU required)
+CPU only (no GPU required):
+
+```bash
 conda activate nnDetPy39
-python nndet_onnx_inference_sw.py \
-  --model-path data/model/model_onnx.onnx \
-  --plan-path data/model/plan_inference.json \
-  --image-path data/test_images/1_AV_LA.nii.gz \
-  --output-dir data/test_images/1_AV_LA_results \
+nndet-infer \
+  --model-path /path/to/model_onnx.onnx \
+  --plan-path /path/to/plan_inference.json \
+  --image-path /path/to/image.nii.gz \
+  --output-dir /path/to/output \
   --backend cpu
 ```
 
@@ -224,7 +232,7 @@ python nndet_onnx_inference_sw.py [OPTIONS]
 
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `--overlap` | `0.5` | Overlap between patches, proportion in [0, 1). Actual overlap ≥ requested (guaranteed). |
+| `--overlap` | `0.5` | Minimum overlap ratio between adjacent patches (0 = no overlap, 0.5 = 50%). Actual overlap may be slightly higher due to rounding. |
 
 ### Post-processing
 
@@ -261,10 +269,10 @@ The pipeline processes each image through 5 steps:
 
 [3/5] Sliding window
   ├── Compute uniform patch positions with overlap ≥ requested
-  └── Extract patches of size [64, 96, 96] (Z, Y, X)
+  └── Extract patches (size read from plan_inference.json, e.g. [64, 96, 96] ZYX)
 
 [4/5] Batched inference
-  ├── Group patches into batches of 4 (model's fixed batch size)
+  ├── Group patches into batches (batch size read from ONNX model input shape)
   ├── Pad last batch by repeating final patch
   ├── Run ONNX inference → 12 output tensors (4×boxes, 4×scores, 4×labels)
   ├── Per-patch post-processing: score filter → size filter → NMS
@@ -390,7 +398,7 @@ Same structure as the JSON but with `np.float32` / `np.int64` arrays instead of 
 ### Output: `{name}_mask.nii.gz`
 
 NIfTI label map where each detection is a connected component with a unique integer label.
-Resampled to the **original image geometry** (spacing, origin, direction, size) using nearest-neighbor interpolation, so it can be directly overlaid on the source image in any viewer.
+Resampled to the **original image geometry** (spacing, origin, direction, size) using nearest-neighbor interpolation, so it can be directly overlaid on the source image in any compatible viewer.
 
 ---
 
@@ -426,6 +434,8 @@ data/model/trt_engine_cache_fp16/
 
 Changing any of these requires rebuilding the cache (`--build-engine-only`).
 
+> **Tip:** The `.engine` files are large and machine-specific, but the `.timing` file is lightweight and reusable. Keeping only the `.timing` file allows TensorRT to skip the autotuning phase during rebuild, significantly reducing compilation time.
+
 **Why multiple engines?** ONNX Runtime splits the graph into TRT-supported sub-graphs + CUDA fallback for unsupported ops (ScatterND, NonZero). For the C++ port, a single unified engine is preferred — see notes on hybrid architecture in `notes/NOTES_REVIEW_SW.md`.
 
 ---
@@ -458,7 +468,7 @@ Requires: `pip install onnx`
 
 ## Benchmarks
 
-Image: 1_AV_LA (CT scan), 294 patches, 74 batches, overlap 0.5, score-thresh 0.5.
+Measured on a single CT scan (294 patches, 74 batches, overlap 0.5, score-thresh 0.5) with an RTX 3070.
 
 | Backend | Inference | Total | s/batch | Speedup vs CPU | Detections |
 |---------|-----------|-------|---------|----------------|------------|
@@ -467,18 +477,17 @@ Image: 1_AV_LA (CT scan), 294 patches, 74 batches, overlap 0.5, score-thresh 0.5
 | `cuda` | 14s | 16s | 0.19 | ×15.6 | 26 |
 | `trt --trt-fp16` | 6s | 8s | 0.08 | **×36.9** | 26 |
 
-All backends produce **26 detections** — results are consistent across backends (minor numerical variation before NMS, identical after).
+All backends produce **26 detections** — results are consistent across backends (negligible numerical variation).
 
 ---
 
 ## Limitations & Known Issues
 
-- **Single class**: The current model detects one class only (label 0). Multi-class support would require per-class NMS.
-- **Single fold**: Uses fold 0 only. Multi-fold ensemble was intentionally deferred for industrialization simplicity.
-- **Image must be ≥ patch_size after resampling**: If any resampled dimension is smaller than the patch (64×96×96), the pipeline exits with an error.
-- **No DICOM input**: Input must be NIfTI (`.nii` or `.nii.gz`). DICOM→NIfTI conversion should be done upstream.
-- **Legacy commented code**: `filter_small_boxes` contains commented-out legacy code (pre-axis-fix version) kept for team reference. Remove before external delivery.
-- **Mask is bounding-box based**: The output mask fills detection bounding boxes, not a pixel-level segmentation.
+- **Single class**: The current model detects one class only (label 0). Multi-class support would require per-class NMS. Patched soon.
+- **Image must be ≥ patch_size after resampling**: If any resampled dimension is smaller than the patch size defined in `plan_inference.json`, the pipeline exits with an error. Patched soon.
+- **No DICOM input**: Input must be NIfTI (`.nii` or `.nii.gz`). DICOM→NIfTI conversion should be done upstream. Patched soon.
+- **Mask is bounding-box based**: The output mask fills detection bounding boxes, not a pixel-level segmentation. Enhanced soon.
+- **Single fold**: Uses one fold only. Multi-fold ensemble was intentionally deferred for industrialization simplicity and speed.
 
 ### Deferred to post-MVP (before production)
 
