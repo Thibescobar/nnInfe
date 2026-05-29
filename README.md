@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/python-≥3.9-blue)
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
-![CI](https://github.com/Thibescobar/mvpDet/actions/workflows/ci.yml/badge.svg)
+![CI](https://img.shields.io/badge/CI-GitHub%20Actions-blue)
 ![Tests](https://img.shields.io/badge/tests-65%20passed-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-42%25-yellow)
 ![Linting](https://img.shields.io/badge/linting-ruff-purple)
