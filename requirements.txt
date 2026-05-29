@@ -1,4 +1,6 @@
 # Core dependencies
 numpy
 SimpleITK
-onnxruntime  # For GPU: replace with onnxruntime-gpu (see README)
+# Install ONE of the following (see README):
+# onnxruntime          # CPU / OpenVINO
+# onnxruntime-gpu      # CUDA / TensorRT

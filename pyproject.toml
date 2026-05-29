@@ -24,13 +24,13 @@ classifiers = [
 dependencies = [
     "numpy",
     "SimpleITK",
-    "onnxruntime",
 ]
 
 [project.scripts]
 nndet-infer = "nndet_onnx.nndet_onnx_inference_sw:main"
 
 [project.optional-dependencies]
+cpu = ["onnxruntime-openvino==1.19.0"]
 dev = [
     "pytest",
     "pytest-cov",
