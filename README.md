@@ -1,5 +1,12 @@
 # nnDet ONNX Inference Pipeline
 
+![Python](https://img.shields.io/badge/python-≥3.9-blue)
+![License](https://img.shields.io/badge/license-Apache%202.0-green)
+![CI](https://github.com/Thibescobar/mvpDet/actions/workflows/ci.yml/badge.svg)
+![Tests](https://img.shields.io/badge/tests-65%20passed-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-42%25-yellow)
+![Linting](https://img.shields.io/badge/linting-ruff-purple)
+
 Standalone inference pipeline for **nnDetection** (3D medical object detection) exported to ONNX.
 Runs a RetinaUNet 3D model with sliding window on NIfTI CT volumes, without any dependency on nnDetection or PyTorch.
 
@@ -28,17 +35,29 @@ Runs a RetinaUNet 3D model with sliding window on NIfTI CT volumes, without any 
 ## Project Structure
 
 ```
-nndet_onnx/
-├── nndet_onnx_inference_sw.py        # Main inference script (~1195 lines)
+mvpDet/
+├── pyproject.toml                     # Package config, dependencies, ruff & pytest settings
+├── requirements.txt                   # Runtime dependencies
+├── LICENSE                            # Apache 2.0
 ├── README.md                          # This file
-├── .gitignore
-├── tools/
-│   ├── nndet_pkl_to_json.py           # Convert plan_inference.pkl → JSON (one-shot)
-│   └── nndet_onnx_shape_inference.py  # ONNX shape inference for TRT (one-shot)
-├── notes/
-│   └── NOTES_REVIEW_SW.md            # Development notes & history
-├── tests/                             # Unit tests (TODO)
-└── data/                              # ⚠ NOT IN GIT — see below
+├── .github/
+│   └── workflows/
+│       └── ci.yml                     # GitHub Actions CI (lint + test, Python 3.9 & 3.11)
+├── nndet_onnx/
+│   ├── __init__.py
+│   ├── nndet_onnx_inference_sw.py     # Main inference script (~1195 lines)
+│   ├── .gitignore
+│   ├── tools/
+│   │   ├── nndet_pkl_to_json.py       # Convert plan_inference.pkl → JSON (one-shot)
+│   │   └── nndet_onnx_shape_inference.py  # ONNX shape inference for TRT (one-shot)
+│   ├── notes/
+│   │   └── NOTES_REVIEW_SW.md         # Development notes & history
+│   └── data/                          # ⚠ NOT IN GIT — see below
+└── tests/
+    ├── test_anchors.py                # Anchor generation tests (13 tests)
+    ├── test_sliding_window.py         # Sliding window & patch extraction (8 tests)
+    ├── test_postprocessing.py         # NMS, filtering, merging (30 tests)
+    └── test_export.py                 # Mask, resampling, export formats (14 tests)
 ```
 
 ### `data/` folder (external, not versioned)
@@ -466,6 +485,21 @@ All backends produce **26 detections** — results are consistent across backend
 - **Structured logging**: Currently all output is `print()`. Production should use Python `logging` with levels (DEBUG/INFO/WARNING).
 - **Pipeline versioning**: Exports (JSON/CSV/PKL) should include a pipeline version number for traceability (medical device regulation).
 - **ONNX Runtime error handling**: No try/except around session creation or inference. GPU OOM, driver mismatch, or engine incompatibility will produce raw Python exceptions.
+
+---
+
+## Development
+
+```bash
+# Install in editable mode with dev dependencies
+pip install -e ".[dev]"
+
+# Lint
+ruff check nndet_onnx/ tests/
+
+# Run tests
+python -m pytest tests/ -v
+```
 
 ---
 
