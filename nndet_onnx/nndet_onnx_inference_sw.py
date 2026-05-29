@@ -16,11 +16,9 @@ from itertools import product
 from pathlib import Path
 from typing import Dict, List, Sequence, Tuple, Union
 
-
 import numpy as np
 import onnxruntime as ort
 import SimpleITK as sitk
-
 
 # nnDet box format indices: (dim0_min, dim1_min, dim0_max, dim1_max, dim2_min, dim2_max)
 # dim0 = Z,  dim1 = Y,  dim2 = X
@@ -456,7 +454,7 @@ def filter_small_boxes(
     boxes = detection["boxes"]
     if len(boxes) == 0:
         return detection
-    
+
     # dx = (boxes[:, 2] - boxes[:, 0]) * spacing_xyz[0]
     # dy = (boxes[:, 3] - boxes[:, 1]) * spacing_xyz[1]
     # dz = (boxes[:, 5] - boxes[:, 4]) * spacing_xyz[2]

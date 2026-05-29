@@ -1,4 +1,6 @@
-import json, pickle, sys
+import json
+import pickle
+import sys
 
 with open("/media/eqip/T9/le/repos_Git/repos_GB/fold0/model_onnx.json") as f:
     j = json.load(f)
@@ -21,6 +23,7 @@ print()
 # Compute cumulative downsampling from encoder strides
 # Encoder has len(strides) stages. After stage i, size = size / cumulative_stride[0..i]
 import numpy as np
+
 cum = np.array([1, 1, 1])
 all_fm = []
 for i, s in enumerate(strides):
