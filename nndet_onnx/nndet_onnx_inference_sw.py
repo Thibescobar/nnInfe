@@ -1189,5 +1189,5 @@ def process_single_image(
 
 
 if __name__ == "__main__":
-    print("\nPipeline of detection inference based on a onnx model created from nnDetection…\n", flush=True)
+    print("\nStandalone nnDetection ONNX inference pipeline…\n", flush=True)
     main()

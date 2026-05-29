@@ -3,8 +3,8 @@
 ![Python](https://img.shields.io/badge/python-≥3.9-blue)
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
 ![CI](https://img.shields.io/badge/CI-GitHub%20Actions-blue)
-![Tests](https://img.shields.io/badge/tests-65%20passed-brightgreen)
-![Coverage](https://img.shields.io/badge/coverage-42%25-yellow)
+![Tests](https://img.shields.io/badge/tests-99%20passed-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-95%25-brightgreen)
 ![Linting](https://img.shields.io/badge/linting-ruff-purple)
 
 Standalone inference pipeline for **nnDetection** (3D medical object detection) exported to ONNX.
@@ -54,10 +54,14 @@ mvpDet/
 │   │   └── NOTES_REVIEW_SW.md         # Development notes & history
 │   └── data/                          # ⚠ NOT IN GIT — see below
 └── tests/
-    ├── test_anchors.py                # Anchor generation tests (13 tests)
+    ├── test_anchors.py                # Anchor generation (13 tests)
     ├── test_sliding_window.py         # Sliding window & patch extraction (8 tests)
     ├── test_postprocessing.py         # NMS, filtering, merging (30 tests)
-    └── test_export.py                 # Mask, resampling, export formats (14 tests)
+    ├── test_export.py                 # Mask, resampling, export formats (14 tests)
+    ├── test_export_scaling.py         # Coordinate scaling in exports (11 tests)
+    ├── test_preprocessing.py          # Resample, clip, normalize (9 tests)
+    ├── test_session.py                # Session creation, inference, NMS backends (11 tests)
+    └── test_integration.py            # End-to-end with mocked session (8 tests)
 ```
 
 ### `data/` folder (external, not versioned)
@@ -88,29 +92,32 @@ Optional (for `--nms-backend nndet`):
 
 ## Installation
 
-Two conda environments are used because `onnxruntime-gpu` and `onnxruntime-openvino` are mutually exclusive pip packages.
+> **Important:** `onnxruntime`, `onnxruntime-gpu`, and `onnxruntime-openvino` are **mutually exclusive** pip packages — they all install to the same `onnxruntime` namespace. Installing one silently overwrites the other. This is why two separate conda environments are recommended.
 
-### Environment 1: CPU + OpenVINO
+### CPU environment
 
 ```bash
 conda create -n nnDetPy39 python=3.9
 conda activate nnDetPy39
-pip install numpy SimpleITK onnxruntime-openvino==1.19.0
+pip install -e ".[cpu]"
 ```
 
 Supports backends: `cpu`, `openvino`.
 
-### Environment 2: CUDA + TensorRT
+### GPU environment
 
 ```bash
 conda create -n nnDetPy39-trt python=3.9
 conda activate nnDetPy39-trt
-pip install numpy SimpleITK
-pip install onnxruntime-gpu --index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-11/pypi/simple/
+pip install -e .
+pip install onnxruntime-gpu \
+  --index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-11/pypi/simple/
 conda install cudnn=8
 pip install tensorrt==10.3.0
 pip install nvidia-cuda-runtime-cu12==12.2.2 nvidia-cublas-cu12==12.2.5.6
 ```
+
+> `onnxruntime-gpu` is installed manually because the CUDA version depends on your driver. Always install it **after** `pip install -e .`.
 
 Then configure `LD_LIBRARY_PATH` (create once):
 
@@ -500,9 +507,18 @@ All backends produce **26 detections** — results are consistent across backend
 ## Development
 
 ```bash
-# Install in editable mode with dev dependencies
-pip install -e ".[dev]"
+# CPU environment
+pip install -e ".[cpu,dev]"
+```
 
+```bash
+# GPU environment (onnxruntime-gpu installed manually)
+pip install -e ".[dev]"
+pip install onnxruntime-gpu \
+  --index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-11/pypi/simple/
+```
+
+```bash
 # Lint
 ruff check nndet_onnx/ tests/
 
