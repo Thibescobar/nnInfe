@@ -36,6 +36,7 @@ Runs a RetinaUNet 3D model with sliding window on volumes, without any dependenc
 
 ```
 mvpDet/
+├── .gitignore                         # Git ignore rules
 ├── pyproject.toml                     # Package config, dependencies, ruff & pytest settings
 ├── LICENSE                            # Apache 2.0
 ├── README.md                          # This file
@@ -45,7 +46,6 @@ mvpDet/
 ├── nndet_onnx/
 │   ├── __init__.py
 │   ├── nndet_onnx_inference_sw.py     # Main inference script (~1195 lines)
-│   ├── .gitignore
 │   ├── tools/
 │   │   ├── nndet_pkl_to_json.py       # Convert plan_inference.pkl → JSON (one-shot)
 │   │   └── nndet_onnx_shape_inference.py  # ONNX shape inference for TRT (one-shot)
