@@ -8,7 +8,7 @@
 ![Linting](https://img.shields.io/badge/linting-ruff-purple)
 
 Standalone inference pipeline for **nnDetection** (3D medical object detection) exported to ONNX.
-Runs a RetinaUNet 3D model with sliding window on NIfTI CT volumes, without any dependency on nnDetection or PyTorch.
+Runs a RetinaUNet 3D model with sliding window on volumes, without any dependency on nnDetection or PyTorch.
 
 > **Goal**: This Python project serves as the functional specification for a future **C++ port** using ITK + ONNX Runtime / TensorRT. It could be used as is as well because self-contained.
 
@@ -36,8 +36,8 @@ Runs a RetinaUNet 3D model with sliding window on NIfTI CT volumes, without any 
 
 ```
 mvpDet/
+├── .gitignore                         # Git ignore rules
 ├── pyproject.toml                     # Package config, dependencies, ruff & pytest settings
-├── requirements.txt                   # Runtime dependencies
 ├── LICENSE                            # Apache 2.0
 ├── README.md                          # This file
 ├── .github/
@@ -46,7 +46,6 @@ mvpDet/
 ├── nndet_onnx/
 │   ├── __init__.py
 │   ├── nndet_onnx_inference_sw.py     # Main inference script (~1195 lines)
-│   ├── .gitignore
 │   ├── tools/
 │   │   ├── nndet_pkl_to_json.py       # Convert plan_inference.pkl → JSON (one-shot)
 │   │   └── nndet_onnx_shape_inference.py  # ONNX shape inference for TRT (one-shot)
@@ -92,9 +91,18 @@ Optional (for `--nms-backend nndet`):
 
 ## Installation
 
-> **Important:** `onnxruntime`, `onnxruntime-gpu`, and `onnxruntime-openvino` are **mutually exclusive** pip packages — they all install to the same `onnxruntime` namespace. Installing one silently overwrites the other. This is why two separate conda environments are recommended.
+### Platform support
 
-### CPU environment
+| Backend | Windows | Linux |
+|---------|---------|-------|
+| `cpu` | ✅ | ✅ |
+| `openvino` | ❌ | ✅ |
+| `cuda` | ❌ | ✅ |
+| `trt` | ❌ | ✅ |
+
+> **Important:** `onnxruntime`, `onnxruntime-gpu`, and `onnxruntime-openvino` are **mutually exclusive** pip packages — they all install to the same `onnxruntime` namespace. Installing one silently overwrites the other.
+
+### CPU environment (all platforms)
 
 ```bash
 conda create -n nnDetPy39 python=3.9
@@ -102,9 +110,17 @@ conda activate nnDetPy39
 pip install -e ".[cpu]"
 ```
 
+### OpenVINO environment (Linux only)
+
+```bash
+conda create -n nnDetPy39-ov python=3.9
+conda activate nnDetPy39-ov
+pip install -e ".[openvino]"
+```
+
 Supports backends: `cpu`, `openvino`.
 
-### GPU environment
+### GPU environment (Linux only)
 
 ```bash
 conda create -n nnDetPy39-trt python=3.9
@@ -133,8 +149,7 @@ EOF
 
 Supports backends: `cpu`, `cuda`, `trt`.
 
-### Validated Configuration
-This corresponds to the configuration on which this repository was developed and tested. It is entirely possible that it will work perfectly on a different configuration!
+### Validated GPU Configuration
 
 | Component | Version |
 |-----------|---------|
@@ -209,10 +224,6 @@ nndet-infer \
 ---
 
 ## CLI Reference
-
-```
-python nndet_onnx_inference_sw.py [OPTIONS]
-```
 
 ### Required
 
@@ -414,7 +425,7 @@ Resampled to the **original image geometry** (spacing, origin, direction, size) 
 | Backend | Provider chain | Model file | Conda env |
 |---------|---------------|------------|-----------|
 | `cpu` | CPU | `model_onnx.onnx` | either |
-| `openvino` | OpenVINO → CPU | `model_onnx.onnx` | nnDetPy39 |
+| `openvino` | OpenVINO → CPU | `model_onnx.onnx` | nnDetPy39-ov (Linux only) |
 | `cuda` | CUDA → CPU | `model_onnx.onnx` | nnDetPy39-trt |
 | `trt` | TensorRT → CUDA → CPU | `model_onnx_shaped.onnx` | nnDetPy39-trt |
 
@@ -507,15 +518,14 @@ All backends produce **26 detections** — results are consistent across backend
 ## Development
 
 ```bash
-# CPU environment
+# CPU (all platforms)
 pip install -e ".[cpu,dev]"
-```
 
-```bash
-# GPU environment (onnxruntime-gpu installed manually)
+# OpenVINO (Linux only)
+pip install -e ".[openvino,dev]"
+
+# GPU (Linux only — see GPU environment above for onnxruntime-gpu setup)
 pip install -e ".[dev]"
-pip install onnxruntime-gpu \
-  --index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-11/pypi/simple/
 ```
 
 ```bash
@@ -525,9 +535,3 @@ ruff check nndet_onnx/ tests/
 # Run tests
 python -m pytest tests/ -v
 ```
-
----
-
-## Development Notes
-
-Detailed development history, technical decisions, and context for resuming work are in [`notes/NOTES_REVIEW_SW.md`](notes/NOTES_REVIEW_SW.md).
