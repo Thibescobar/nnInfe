@@ -1,6 +1,0 @@
-# Core dependencies
-numpy
-SimpleITK
-# Install ONE of the following (see README):
-# onnxruntime          # CPU / OpenVINO
-# onnxruntime-gpu      # CUDA / TensorRT
