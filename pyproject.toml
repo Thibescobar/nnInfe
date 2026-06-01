@@ -30,7 +30,8 @@ dependencies = [
 nndet-infer = "nndet_onnx.nndet_onnx_inference_sw:main"
 
 [project.optional-dependencies]
-cpu = ["onnxruntime-openvino==1.19.0"]
+cpu = ["onnxruntime"]
+openvino = ["onnxruntime-openvino", "numpy<2"]
 dev = [
     "pytest",
     "pytest-cov",
