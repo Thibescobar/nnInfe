@@ -49,6 +49,7 @@ The full license text governs these permissions. Dependencies and model weights 
 
 ```
 mvpDet/
+├── .gitignore                         # Git ignore rules
 ├── pyproject.toml                     # Package config, dependencies, ruff & pytest settings
 ├── LICENSE                            # PolyForm Noncommercial 1.0.0
 ├── README.md                          # This file
@@ -58,7 +59,6 @@ mvpDet/
 ├── nndet_onnx/
 │   ├── __init__.py
 │   ├── nndet_onnx_inference_sw.py     # Main inference script (~1195 lines)
-│   ├── .gitignore
 │   ├── tools/
 │   │   ├── nndet_pkl_to_json.py       # Convert plan_inference.pkl → JSON (one-shot)
 │   │   └── nndet_onnx_shape_inference.py  # ONNX shape inference for TRT (one-shot)
