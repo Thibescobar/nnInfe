@@ -57,9 +57,9 @@ mvpDet/
     ├── test_sliding_window.py         # Sliding window & patch extraction (8 tests)
     ├── test_postprocessing.py         # NMS, filtering, merging (30 tests)
     ├── test_export.py                 # Mask, resampling, export formats (14 tests)
-    ├── test_export_scaling.py         # Coordinate scaling in exports (11 tests)
+    ├── test_export_scaling.py         # Coordinate scaling in exports (8 tests)
     ├── test_preprocessing.py          # Resample, clip, normalize (9 tests)
-    ├── test_session.py                # Session creation, inference, NMS backends (11 tests)
+    ├── test_session.py                # Session creation, inference, NMS backends (9 tests)
     └── test_integration.py            # End-to-end with mocked session (8 tests)
 ```
 
@@ -142,7 +142,7 @@ CONDA_PREFIX=$CONDA_PREFIX
 mkdir -p "$CONDA_PREFIX/etc/conda/activate.d"
 cat > "$CONDA_PREFIX/etc/conda/activate.d/env_vars.sh" << 'EOF'
 #!/bin/bash
-SITE="$CONDA_PREFIX/lib/python3.9/site-packages"
+SITE="$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
 export LD_LIBRARY_PATH="$SITE/tensorrt_libs:$SITE/nvidia/cuda_runtime/lib:$SITE/nvidia/cublas/lib:$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
 EOF
 ```
