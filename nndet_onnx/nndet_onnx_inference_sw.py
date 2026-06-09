@@ -1185,6 +1185,17 @@ def process_single_image(
     print(f"      exports done  ({time.time() - t0:.2f}s)", flush=True)
 
     n_detections = len(merged["boxes"])
+
+
+
+    # Export an empty file called .done at the same place of the mask, to signal that processing is complete (useful for batch scripts)
+    done_path = str(output_dir / f".done")
+    with open(done_path, "w") as f:
+        f.write("done")
+    print(f"      .done file \u2192 {done_path}", flush=True) 
+
+
+
     return n_detections
 
 
