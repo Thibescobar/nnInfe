@@ -1101,23 +1101,47 @@ def process_single_image(
             if len(det["boxes"]) > 0:
                 all_detections.append(det)
 
-        # Progress bar
+
+
+        # # Progress bar
+        # progress = (batch_idx + 1) / n_batches
+        # filled = int(bar_width * progress)
+        # bar = "\u2588" * filled + "\u2591" * (bar_width - filled)
+        # elapsed = time.time() - t0
+        # time_per_iter = elapsed / (batch_idx + 1)
+        # remaining = time_per_iter * (n_batches - batch_idx - 1)
+
+        # sys.stdout.write(
+        #     f"\r      [{bar}] {progress:6.1%}  "
+        #     f"batch {batch_idx + 1}/{n_batches}  "
+        #     f"patch {end}/{n_patches}  "
+        #     f"{time_per_iter:.2f}s/batch  "
+        #     f"elapsed {elapsed:.0f}s  remaining {remaining:.0f}s"
+        # )
+        # sys.stdout.flush()
+
+
+        
+        # Progress log compatible K9s
         progress = (batch_idx + 1) / n_batches
-        filled = int(bar_width * progress)
-        bar = "\u2588" * filled + "\u2591" * (bar_width - filled)
         elapsed = time.time() - t0
         time_per_iter = elapsed / (batch_idx + 1)
         remaining = time_per_iter * (n_batches - batch_idx - 1)
-        sys.stdout.write(
-            f"\r      [{bar}] {progress:6.1%}  "
-            f"batch {batch_idx + 1}/{n_batches}  "
-            f"patch {end}/{n_patches}  "
-            f"{time_per_iter:.2f}s/batch  "
-            f"elapsed {elapsed:.0f}s  remaining {remaining:.0f}s"
-        )
-        sys.stdout.flush()
 
-    print(f"\n      inference done ({time.time() - t0:.2f}s)", flush=True)
+        n_printed_batch = 3
+        if batch_idx % n_printed_batch == 0 or batch_idx == n_batches - 1:
+            print(
+                f"            progress {progress:6.1%}  "
+                f"batch {batch_idx + 1}/{n_batches}  "
+                f"patch {end}/{n_patches}  "
+                f"{time_per_iter:.2f}s/batch  "
+                f"elapsed {elapsed:.0f}s  remaining {remaining:.0f}s",
+                flush=True,
+            )
+
+
+
+    print(f"      inference done ({time.time() - t0:.2f}s)", flush=True)
 
     # ---- Merge + optional global NMS ----
     print("[5/5] Merging detections …", flush=True)
