@@ -28,6 +28,7 @@ dependencies = [
 
 [project.scripts]
 nndet-infer = "nndet_onnx.nndet_onnx_inference_sw:main"
+nnunet-infer = "nndet_onnx.nnunet_onnx_inference_sw:main"
 
 [project.optional-dependencies]
 cpu = ["onnxruntime"]
