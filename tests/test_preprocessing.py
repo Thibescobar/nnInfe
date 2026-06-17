@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import SimpleITK as sitk
 
-from nndet_onnx.nndet_onnx_inference_sw import (
+from nndet_onnx.common.preprocessing import (
     clip_image,
     normalize_image,
     preprocess_image,
@@ -44,6 +44,22 @@ class TestResampleImage:
         assert result.GetSpacing() == pytest.approx((0.5, 1.0, 2.0))
         # X: 40 * 1.0/0.5 = 80, Y: 20 * 1.0/1.0 = 20, Z: 10 * 1.0/2.0 = 5
         assert result.GetSize() == (80, 20, 5)
+
+    def test_applies_transpose_forward_to_target_spacing(self):
+        arr = np.ones((10, 20, 40), dtype=np.float32)
+        img = _make_sitk_image(arr, spacing=(1.0, 1.0, 1.0))
+
+        result = resample_image(
+            img,
+            target_spacing_zyx=[2.0, 1.0, 0.5],
+            transpose_forward_zyx=[2, 0, 1],
+        )
+
+        # Uses Aurore's explicit map: my_map = {2: 2.0, 0: 1.0, 1: 0.5}
+        # mapped to vector1 = [my_map[1], my_map[2], my_map[0]] = [0.5, 2.0, 1.0]
+        assert result.GetSpacing() == pytest.approx((0.5, 2.0, 1.0))
+        # X: 40 * 1.0/0.5 = 80, Y: 20 * 1.0/2.0 = 10, Z: 10 * 1.0/1.0 = 10
+        assert result.GetSize() == (80, 10, 10)
 
 
 class TestClipImage:

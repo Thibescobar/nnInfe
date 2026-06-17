@@ -72,7 +72,7 @@ class TestProcessSingleImage:
             np.zeros((0,), dtype=np.int64),
         ]
 
-        from nndet_onnx.nndet_onnx_inference_sw import compute_anchors
+        from nndet_onnx.detection.anchors import compute_anchors
         anchors_batch = compute_anchors(plan, patch_size, batch_size)
 
         output_dir = tmp_path / "results"
@@ -125,7 +125,7 @@ class TestProcessSingleImage:
 
         mock_session.run.side_effect = fake_run
 
-        from nndet_onnx.nndet_onnx_inference_sw import compute_anchors
+        from nndet_onnx.detection.anchors import compute_anchors
         anchors_batch = compute_anchors(plan, patch_size, batch_size)
         output_dir = tmp_path / "results"
 
@@ -166,7 +166,7 @@ class TestProcessSingleImage:
             np.zeros((0,), dtype=np.int64),
         ]
 
-        from nndet_onnx.nndet_onnx_inference_sw import compute_anchors
+        from nndet_onnx.detection.anchors import compute_anchors
         anchors_batch = compute_anchors(plan, patch_size, batch_size)
         output_dir = tmp_path / "results"
 

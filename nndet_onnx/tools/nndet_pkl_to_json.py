@@ -4,6 +4,7 @@
 Only extracts the fields used by nndet_onnx_inference_sw.py:
   - patch_size
   - target_spacing (ZYX order)
+    - transpose_forward / transpose_backward (if present)
   - anchors (width, height, depth per decoder level)
   - architecture (strides, decoder_levels)
   - intensity_properties (global: percentile_00_5, percentile_99_5, mean, std)
@@ -83,6 +84,11 @@ def convert(pkl_path: str, output_path: str = None) -> None:
         "intensity_properties": intensity_properties,
         "inference_plan": inference_plan,
     }
+
+    if "transpose_forward" in plan:
+        out["transpose_forward"] = list(plan["transpose_forward"])
+    if "transpose_backward" in plan:
+        out["transpose_backward"] = list(plan["transpose_backward"])
 
     # --- Write ---
 

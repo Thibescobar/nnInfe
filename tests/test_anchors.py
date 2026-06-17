@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from nndet_onnx.nndet_onnx_inference_sw import (
+from nndet_onnx.detection.anchors import (
     _generate_cell_anchors,
     compute_anchors,
     compute_feature_map_sizes,
