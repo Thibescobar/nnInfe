@@ -73,8 +73,8 @@ mvpDet/
 All file paths are passed via CLI arguments (`--model-path`, `--plan-path`, `--image-path`, etc.), so **you can store your model and images anywhere on your system**. The `data/` folder inside `nndet_onnx/` is simply a convenience location used during development and is excluded from the git repository.
 
 Required files to run inference:
-- An ONNX model file (`.onnx`) — passed via `--model-path` (e.g. `model_onnx.onnx` for detection, `final_ONNX.onnx` for segmentation).
-- An inference config file (`.json`) — passed via `--plan-path` (`plan_inference.json` for detection, `plans.json` for segmentation).
+- An ONNX model file (`.onnx`) — passed via `--model-path`.
+- An inference config file (`.json`) — passed via `--plan-path` (e.g.`plan_inference.json` for detection, `plans.json` for segmentation).
 
 Optional / auto-generated:
 - `trt_engine_cache_fp16/` — TensorRT compiled engines, created automatically next to the model on first TRT run. Specific to GPU architecture (e.g. sm86 for RTX 3070), regenerated if missing.
@@ -134,8 +134,8 @@ pip install -e .
 pip install onnxruntime-gpu \
   --index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-11/pypi/simple/
 conda install cudnn=8
-pip install tensorrt==10.3.0
-pip install nvidia-cuda-runtime-cu12==12.2.2 nvidia-cublas-cu12==12.2.5.6
+pip install tensorrt==10.3.0 tensorrt-cu12_bindings==10.3.0 tensorrt-cu12_libs==10.3.0
+pip install nvidia-cuda-runtime-cu12==12.2.140 nvidia-cublas-cu12==12.2.5.6
 ```
 
 > `onnxruntime-gpu` is installed manually because the CUDA version depends on your driver. Always install it **after** `pip install -e .`.
@@ -173,7 +173,7 @@ Supports backends: `cpu`, `cuda`, `trt`.
 
 ### 1. Prepare model files (if needed)
 
-Convert the inference plan from nnDetection's pickle format to JSON:
+Convert the inference plan from pickle format to JSON:
 
 ```bash
 python nndet_onnx/tools/nndet_pkl_to_json.py \
@@ -181,7 +181,7 @@ python nndet_onnx/tools/nndet_pkl_to_json.py \
   --output /path/to/plan_inference.json
 ```
 
-Add intermediate shapes to the ONNX model (required for TRT backend):
+Add intermediate shapes to the ONNX model (often required for TRT backend):
 
 ```bash
 python nndet_onnx/tools/nndet_onnx_shape_inference.py \
@@ -233,7 +233,7 @@ Single image with TRT FP16:
 ```bash
 conda activate nnDetPy39-trt
 nnunet-infer \
-  --model-path /path/to/final_ONNX_shaped.onnx \
+  --model-path /path/to/model_onnx_shaped.onnx \
   --plan-path /path/to/plans.json \
   --configuration 3d_fullres \
   --image-path /path/to/image.nii.gz \
