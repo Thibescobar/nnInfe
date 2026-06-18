@@ -18,7 +18,7 @@ Runs RetinaUNet 3D and U-Net-based models using sliding window on full volumes, 
 
 If you use this package in your product, research, or publications, please cite or refer to it as:
 
-> Escobar, Thibault (2026). **nninfe: A standalone ONNX inference pipeline for nnDetection and nnUNet**. GitHub.
+> Escobar, Thibault (2026). **nnInfe: A standalone ONNX inference pipeline optimized for nnDetection and nnUNet**. GitHub.
 
 Suggested BibTeX entry:
 
