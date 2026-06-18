@@ -28,7 +28,7 @@ Suggested BibTeX entry:
   author = {Escobar, Thibault},
   year = {2026},
   publisher = {GitHub},
-  url = {https://github.com/<your-username>/<your-repository>},
+  url = {https://github.com/Thibescobar/nnInfe},
   license = {Apache-2.0}
 }
 ```
