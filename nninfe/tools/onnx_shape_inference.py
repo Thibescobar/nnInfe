@@ -3,7 +3,7 @@ Run ONNX shape inference on a model and save the result.
 Required for TensorRT backend which needs intermediate shapes annotated.
 
 Usage:
-    python nndet_onnx_shape_inference.py \
+    python nninfe_shape_inference.py \
         --input  model_onnx.onnx \
         --output model_onnx_shaped.onnx
 """

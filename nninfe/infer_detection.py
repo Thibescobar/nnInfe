@@ -12,19 +12,19 @@ from typing import Dict, List
 import numpy as np
 import SimpleITK as sitk
 
-from nndet_onnx.common.cli import collect_nifti_inputs
-from nndet_onnx.common.io import read_image_metadata, resample_mask_to_reference
-from nndet_onnx.common.preprocessing import preprocess_image
-from nndet_onnx.common.session import BACKENDS, create_session, parse_outputs, run_inference
-from nndet_onnx.common.sliding_window import compute_patch_positions, extract_patch
-from nndet_onnx.detection.anchors import compute_anchors
-from nndet_onnx.detection.export import (
+from nninfe.common.cli import collect_nifti_inputs
+from nninfe.common.io import read_image_metadata, resample_mask_to_reference
+from nninfe.common.preprocessing import preprocess_image
+from nninfe.common.session import BACKENDS, create_session, parse_outputs, run_inference
+from nninfe.common.sliding_window import compute_patch_positions, extract_patch
+from nninfe.detection.anchors import compute_anchors
+from nninfe.detection.export import (
     detections_to_mask,
     export_detections_csv,
     export_detections_json,
     export_detections_pkl,
 )
-from nndet_onnx.detection.postprocessing import (
+from nninfe.detection.postprocessing import (
     apply_nms,
     clip_boxes_to_image_shape,
     gaussian_weight_for_boxes,
@@ -32,7 +32,7 @@ from nndet_onnx.detection.postprocessing import (
     postprocess,
     translate_boxes,
 )
-from nndet_onnx.segmentation.pipeline import pad_volume_to_patch_size
+from nninfe.segmentation.pipeline import pad_volume_to_patch_size
 
 
 def main() -> None:
