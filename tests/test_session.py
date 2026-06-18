@@ -5,12 +5,12 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from nndet_onnx.common.session import create_session, parse_outputs, run_inference
-from nndet_onnx.detection.postprocessing import apply_nms, nms_nndet, postprocess
+from nninfe.common.session import create_session, parse_outputs, run_inference
+from nninfe.detection.postprocessing import apply_nms, nms_nndet, postprocess
 
 
 class TestCreateSession:
-    @patch("nndet_onnx.common.session.ort")
+    @patch("nninfe.common.session.ort")
     def test_cpu_backend(self, mock_ort):
         mock_session = MagicMock()
         mock_session.get_providers.return_value = ["CPUExecutionProvider"]
@@ -22,7 +22,7 @@ class TestCreateSession:
         mock_ort.InferenceSession.assert_called_once()
         assert session == mock_session
 
-    @patch("nndet_onnx.common.session.ort")
+    @patch("nninfe.common.session.ort")
     def test_cuda_backend(self, mock_ort):
         mock_session = MagicMock()
         mock_session.get_providers.return_value = ["CUDAExecutionProvider", "CPUExecutionProvider"]
@@ -34,8 +34,8 @@ class TestCreateSession:
         providers = call_args.kwargs.get("providers") or call_args[1].get("providers")
         assert "CUDAExecutionProvider" in providers
 
-    @patch("nndet_onnx.common.session.ort")
-    @patch("nndet_onnx.common.session.os.makedirs")
+    @patch("nninfe.common.session.ort")
+    @patch("nninfe.common.session.os.makedirs")
     def test_trt_backend_fp16(self, mock_makedirs, mock_ort):
         mock_session = MagicMock()
         mock_session.get_providers.return_value = ["TensorrtExecutionProvider"]
@@ -51,7 +51,7 @@ class TestCreateSession:
         assert trt_opts[0]["trt_fp16_enable"] == "True"
         assert trt_opts[0]["trt_engine_cache_enable"] == "True"
 
-    @patch("nndet_onnx.common.session.ort")
+    @patch("nninfe.common.session.ort")
     def test_openvino_backend(self, mock_ort):
         mock_session = MagicMock()
         mock_session.get_providers.return_value = ["OpenVINOExecutionProvider"]

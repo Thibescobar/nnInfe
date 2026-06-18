@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import SimpleITK as sitk
 
-from nndet_onnx.common.preprocessing import (
+from nninfe.common.preprocessing import (
     clip_image,
     normalize_image,
     preprocess_image,

@@ -5,7 +5,7 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 
-from nndet_onnx.common.constants import D0_MAX, D0_MIN, D1_MAX, D1_MIN, D2_MAX, D2_MIN
+from nninfe.common.constants import D0_MAX, D0_MIN, D1_MAX, D1_MIN, D2_MAX, D2_MIN
 
 
 def _build_gaussian_sigma(patch_size_zyx: Tuple[int, ...], edge_value: float = 0.001):

@@ -6,8 +6,8 @@ from unittest.mock import MagicMock
 import numpy as np
 import SimpleITK as sitk
 
-from nndet_onnx.nnunet_onnx_inference_sw import process_single_image
-from nndet_onnx.segmentation.pipeline import (
+from nninfe.infer_segmentation import process_single_image
+from nninfe.segmentation.pipeline import (
     extract_plan_inference,
     flip_image_axes,
     pad_volume_to_patch_size,
@@ -141,7 +141,7 @@ def test_process_single_image_pads_small_volume(tmp_path):
 
 
 def test_resolve_patch_size_zyx_prefers_model_shape():
-    from nndet_onnx.nnunet_onnx_inference_sw import _resolve_patch_size_zyx
+    from nninfe.infer_segmentation import _resolve_patch_size_zyx
 
     mock_session = MagicMock()
     mock_session.get_inputs.return_value = [MagicMock(shape=[1, 1, 128, 112, 112])]
