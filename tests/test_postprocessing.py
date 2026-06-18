@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from nndet_onnx.detection.postprocessing import (
+from nninfe.detection.postprocessing import (
     _iou_3d,
     filter_by_score,
     filter_small_boxes,

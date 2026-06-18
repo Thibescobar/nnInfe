@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 import SimpleITK as sitk
 
-from nndet_onnx.nndet_onnx_inference_sw import process_single_image
+from nninfe.infer_detection import process_single_image
 
 
 def _make_plan():
@@ -72,7 +72,7 @@ class TestProcessSingleImage:
             np.zeros((0,), dtype=np.int64),
         ]
 
-        from nndet_onnx.detection.anchors import compute_anchors
+        from nninfe.detection.anchors import compute_anchors
         anchors_batch = compute_anchors(plan, patch_size, batch_size)
 
         output_dir = tmp_path / "results"
@@ -125,7 +125,7 @@ class TestProcessSingleImage:
 
         mock_session.run.side_effect = fake_run
 
-        from nndet_onnx.detection.anchors import compute_anchors
+        from nninfe.detection.anchors import compute_anchors
         anchors_batch = compute_anchors(plan, patch_size, batch_size)
         output_dir = tmp_path / "results"
 
@@ -166,7 +166,7 @@ class TestProcessSingleImage:
             np.zeros((0,), dtype=np.int64),
         ]
 
-        from nndet_onnx.detection.anchors import compute_anchors
+        from nninfe.detection.anchors import compute_anchors
         anchors_batch = compute_anchors(plan, patch_size, batch_size)
         output_dir = tmp_path / "results"
 
@@ -190,12 +190,12 @@ class TestProcessSingleImage:
 
 
 class TestMain:
-    @patch("nndet_onnx.nndet_onnx_inference_sw.create_session")
+    @patch("nninfe.infer_detection.create_session")
     def test_main_single_image(self, mock_create_session, tmp_path):
         """main() with a single image in minimal mode."""
         import json
 
-        from nndet_onnx.nndet_onnx_inference_sw import main
+        from nninfe.infer_detection import main
 
         # Write plan
         plan = _make_plan()
@@ -241,12 +241,12 @@ class TestMain:
 
         assert Path(output_dir).exists()
 
-    @patch("nndet_onnx.nndet_onnx_inference_sw.create_session")
+    @patch("nninfe.infer_detection.create_session")
     def test_main_build_engine_only(self, mock_create_session, tmp_path):
         """main() with --build-engine-only exits early."""
         import json
 
-        from nndet_onnx.nndet_onnx_inference_sw import main
+        from nninfe.infer_detection import main
 
         plan = _make_plan()
         plan_path = str(tmp_path / "plan.json")
@@ -276,12 +276,12 @@ class TestMain:
         # No inference should have been run
         mock_session.run.assert_not_called()
 
-    @patch("nndet_onnx.nndet_onnx_inference_sw.create_session")
+    @patch("nninfe.infer_detection.create_session")
     def test_main_batch_mode(self, mock_create_session, tmp_path):
         """main() with --image-dir processes multiple images."""
         import json
 
-        from nndet_onnx.nndet_onnx_inference_sw import main
+        from nninfe.infer_detection import main
 
         plan = _make_plan()
         plan_path = str(tmp_path / "plan.json")
@@ -333,7 +333,7 @@ class TestMain:
         """main() exits if model file doesn't exist."""
         import json
 
-        from nndet_onnx.nndet_onnx_inference_sw import main
+        from nninfe.infer_detection import main
 
         plan = _make_plan()
         plan_path = str(tmp_path / "plan.json")
@@ -357,7 +357,7 @@ class TestMain:
         """main() exits if both --image-path and --image-dir given."""
         import json
 
-        from nndet_onnx.nndet_onnx_inference_sw import main
+        from nninfe.infer_detection import main
 
         plan = _make_plan()
         plan_path = str(tmp_path / "plan.json")

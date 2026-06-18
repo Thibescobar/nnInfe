@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from nndet_onnx.common.sliding_window import (
+from nninfe.common.sliding_window import (
     compute_patch_positions,
     extract_patch,
 )

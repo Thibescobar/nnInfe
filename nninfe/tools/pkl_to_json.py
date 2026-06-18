@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Convert plan_inference.pkl to a JSON file readable by C++ (nlohmann::json).
 
-Only extracts the fields used by nndet_onnx_inference_sw.py:
+Only extracts the fields used by nninfe_inference_sw.py:
   - patch_size
   - target_spacing (ZYX order)
     - transpose_forward / transpose_backward (if present)
@@ -12,7 +12,7 @@ Only extracts the fields used by nndet_onnx_inference_sw.py:
                     model_detections_per_image, remove_small_boxes)
 
 Usage:
-    python nndet_pkl_to_json.py --pkl /path/to/plan_inference.pkl [--output /path/to/plan_inference.json]
+    python pkl_to_json.py --pkl /path/to/plan_inference.pkl [--output /path/to/plan_inference.json]
 """
 
 import argparse
@@ -76,7 +76,7 @@ def convert(pkl_path: str, output_path: str = None) -> None:
     # --- Assemble ---
 
     out = {
-        "_comment": f"Converted from {pkl_path.name} by nndet_pkl_to_json.py",
+        "_comment": f"Converted from {pkl_path.name} by pkl_to_json.py",
         "patch_size": patch_size,
         "target_spacing": target_spacing,
         "anchors": anchors,
