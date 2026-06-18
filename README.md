@@ -35,7 +35,7 @@ Runs RetinaUNet 3D and U-Net-based models using sliding window on full volumes, 
 ## Project Structure
 
 ```
-mvpDet/
+nninfe/
 ├── .gitignore                         # Git ignore rules
 ├── pyproject.toml                     # Package config, dependencies, ruff & pytest settings
 ├── LICENSE                            # Apache 2.0
@@ -43,16 +43,16 @@ mvpDet/
 ├── .github/
 │   └── workflows/
 │       └── ci.yml                     # GitHub Actions CI (lint + test, Python 3.9 & 3.11)
-├── nndet_onnx/
+├── nninfe/
 │   ├── __init__.py
-│   ├── nndet_onnx_inference_sw.py     # Detection CLI
-│   ├── nnunet_onnx_inference_sw.py    # Segmentation CLI
+│   ├── infer_detection.py     # Detection CLI
+│   ├── infer_segmentation.py    # Segmentation CLI
 │   ├── common/                        # Shared preprocessing, sliding-window, I/O, session
 │   ├── detection/                     # Detection-specific anchors, post-processing, export
 │   ├── segmentation/                  # Segmentation-specific plan, reconstruction
 │   ├── tools/
-│   │   ├── nndet_pkl_to_json.py       # Convert plan_inference.pkl → JSON (one-shot)
-│   │   └── nndet_onnx_shape_inference.py  # ONNX shape inference for TRT (one-shot)
+│   │   ├── pkl_to_json.py       # Convert plan_inference.pkl → JSON (one-shot)
+│   │   └── onnx_shape_inference.py  # ONNX shape inference for TRT (one-shot)
 │   └── data/                          # ⚠ NOT TRACKED IN GIT — see below
 └── tests/
     ├── test_anchors.py                # Detection anchor generation
@@ -68,7 +68,7 @@ mvpDet/
 
 ### `data/` folder (external, not versioned)
 
-All file paths are passed via CLI arguments (`--model-path`, `--plan-path`, `--image-path`, etc.), so **you can store your model and images anywhere on your system**. The `data/` folder inside `nndet_onnx/` is simply a convenience location used during development and is excluded from the git repository.
+All file paths are passed via CLI arguments (`--model-path`, `--plan-path`, `--image-path`, etc.), so **you can store your model and images anywhere on your system**. The `data/` folder inside `nninfe/` is simply a convenience location used during development and is excluded from the git repository.
 
 Required files to run inference:
 - An ONNX model file (`.onnx`) — passed via `--model-path`.
@@ -184,7 +184,7 @@ Single image with TRT FP16 (fastest):
 
 ```bash
 conda activate nnInfe-trt
-nndet-infer \
+nninfe-det \
   --model-path /path/to/model_onnx(_shaped).onnx \
   --plan-path /path/to/plan_inference.json \
   --image-path /path/to/image.nii.gz \
@@ -195,7 +195,7 @@ nndet-infer \
 Batch mode (all NIfTI in a directory):
 
 ```bash
-nndet-infer \
+nninfe-det \
   --model-path /path/to/model_onnx(_shaped).onnx \
   --plan-path /path/to/plan_inference.json \
   --image-dir /path/to/images/ \
@@ -207,7 +207,7 @@ CPU only (no GPU required):
 
 ```bash
 conda activate nnInfe
-nndet-infer \
+nninfe-det \
   --model-path /path/to/model_onnx.onnx \
   --plan-path /path/to/plan_inference.json \
   --image-path /path/to/image.nii.gz \
@@ -223,7 +223,7 @@ Single image with TRT FP16:
 
 ```bash
 conda activate nnInfe-trt
-nnunet-infer \
+nninfe-seg \
   --model-path /path/to/model_onnx_shaped.onnx \
   --plan-path /path/to/plans.json \
   --configuration <config_value> \
@@ -281,7 +281,7 @@ nnunet-infer \
 | `--trt-fp16` | off | Enable FP16 inference for TensorRT. |
 | `--build-engine-only` | off | Build TRT engine cache and exit (no image/output needed). |
 
-### `nnunet-infer configuration` 
+### `nninfe-seg configuration` 
 
 | Argument | Description |
 |----------|-------------|
@@ -386,7 +386,7 @@ Named constants in code: `D0_MIN=0, D1_MIN=1, D0_MAX=2, D1_MAX=3, D2_MIN=4, D2_M
 
 ### Input: `plan_inference.json` (Detection)
 
-Converted from nnDetection's `plan_inference.pkl` using `tools/nndet_pkl_to_json.py`.
+Converted from nnDetection's `plan_inference.pkl` using `tools/pkl_to_json.py`.
 
 ```json
 {
@@ -548,7 +548,7 @@ pip install -e ".[dev]"
 
 ```bash
 # Lint
-ruff check nndet_onnx/ tests/
+ruff check nninfe/ tests/
 
 # Run tests
 python -m pytest tests/ -v

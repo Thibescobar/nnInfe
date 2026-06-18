@@ -9,11 +9,11 @@ from pathlib import Path
 
 import SimpleITK as sitk
 
-from nndet_onnx.common.cli import collect_nifti_inputs
-from nndet_onnx.common.io import resample_mask_to_reference
-from nndet_onnx.common.preprocessing import preprocess_image
-from nndet_onnx.common.session import BACKENDS, create_session
-from nndet_onnx.segmentation.pipeline import (
+from nninfe.common.cli import collect_nifti_inputs
+from nninfe.common.io import resample_mask_to_reference
+from nninfe.common.preprocessing import preprocess_image
+from nninfe.common.session import BACKENDS, create_session
+from nninfe.segmentation.pipeline import (
     crop_volume_to_shape,
     export_segmentation_mask,
     extract_plan_inference,

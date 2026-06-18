@@ -7,7 +7,7 @@ import pickle
 import numpy as np
 import pytest
 
-from nndet_onnx.detection.export import (
+from nninfe.detection.export import (
     export_detections_csv,
     export_detections_json,
     export_detections_pkl,

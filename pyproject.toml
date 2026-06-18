@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "nndet-onnx"
+name = "nninfe"
 version = "0.1.0"
 description = "Standalone 3D medical object detection inference pipeline using nnDetection ONNX models"
 readme = "README.md"
@@ -27,8 +27,8 @@ dependencies = [
 ]
 
 [project.scripts]
-nndet-infer = "nndet_onnx.nndet_onnx_inference_sw:main"
-nnunet-infer = "nndet_onnx.nnunet_onnx_inference_sw:main"
+nninfe-det = "nninfe.infer_detection:main"
+nninfe-seg = "nninfe.infer_segmentation:main"
 
 [project.optional-dependencies]
 cpu = ["onnxruntime"]
@@ -40,12 +40,12 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["nndet_onnx*"]
+include = ["nninfe*"]
 
 [tool.ruff]
 line-length = 120
 target-version = "py39"
-exclude = ["nndet_onnx/tools/"]
+exclude = ["nninfe/tools/"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
@@ -53,10 +53,10 @@ ignore = ["E501"]  # Long lines tolerated in verbose print statements
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=nndet_onnx --cov-report=term-missing"
+addopts = "--cov=nninfe --cov-report=term-missing"
 
 [tool.coverage.run]
-omit = ["nndet_onnx/__init__.py"]
+omit = ["nninfe/__init__.py"]
 
 [tool.coverage.report]
 exclude_lines = [

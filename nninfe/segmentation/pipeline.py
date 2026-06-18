@@ -8,7 +8,7 @@ from typing import List, Optional, Tuple
 import numpy as np
 import SimpleITK as sitk
 
-from nndet_onnx.common.sliding_window import compute_patch_positions, extract_patch
+from nninfe.common.sliding_window import compute_patch_positions, extract_patch
 
 
 def flip_image_axes(image: sitk.Image, flip_x: bool, flip_y: bool, flip_z: bool) -> sitk.Image:
