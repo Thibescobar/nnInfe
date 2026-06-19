@@ -50,7 +50,7 @@ def create_session(
         provider_options=provider_options,
     )
     actual = session.get_providers()
-    print(f"      ONNX Runtime providers: {actual}\\n", flush=True)
+    print(f"      ONNX Runtime providers: {actual}\n", flush=True)
     return session
 
 
