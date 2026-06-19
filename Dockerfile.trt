@@ -1,0 +1,42 @@
+FROM nvidia/cuda:12.2.2-cudnn8-runtime-ubuntu22.04
+
+# Install python and necessary system packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3.11-venv \
+    python3-pip \
+    python3.11-dev \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Symlink python3 to python
+RUN ln -s /usr/bin/python3.11 /usr/bin/python
+
+WORKDIR /app
+
+# Create a virtualenv
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+ENV PIP_NO_CACHE_DIR=1
+
+# Pre-install specific TRT and CUDA pip dependencies from the README
+RUN pip install tensorrt==10.3.0 tensorrt-cu12_bindings==10.3.0 tensorrt-cu12_libs==10.3.0 && \
+    pip install nvidia-cuda-runtime-cu12==12.2.140 nvidia-cublas-cu12==12.2.5.6
+
+# Copy project files
+COPY pyproject.toml README.md ./
+COPY nninfe/ nninfe/
+
+# Install the package itself
+RUN pip install .
+
+# Install ONNX Runtime GPU 
+RUN pip install onnxruntime-gpu --index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-11/pypi/simple/
+
+# Setup LD_LIBRARY_PATH dynamically so it finds the python packages
+RUN SITE="$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')" && \
+    echo "export LD_LIBRARY_PATH=\"$SITE/tensorrt_libs:$SITE/nvidia/cuda_runtime/lib:$SITE/nvidia/cublas/lib:\$LD_LIBRARY_PATH\"" > /etc/profile.d/trt_env.sh
+
+ENV BASH_ENV=/etc/profile.d/trt_env.sh
+
+CMD ["/bin/bash", "-c", "source /etc/profile.d/trt_env.sh && nninfe-det --help"]
