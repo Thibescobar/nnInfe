@@ -67,6 +67,11 @@ def main() -> None:
         action="store_true",
         help="Disable the final global NMS after merging all patches",
     )
+    parser.add_argument(
+        "--pad-value",
+        default="0.0",
+        help="Padding value to use. Can be a number or 'min' to use the minimum value of the image minus 1 (default: 0.0)",
+    )
 
     parser.add_argument(
         "--backend",
@@ -199,6 +204,7 @@ def main() -> None:
             nms_backend=args.nms_backend,
             no_global_nms=args.no_global_nms,
             export_pkl=args.export_pkl,
+            pad_value=args.pad_value,
         )
         summary.append((image_name, result))
 
@@ -226,6 +232,7 @@ def process_single_image(
     nms_backend: str,
     no_global_nms: bool,
     export_pkl: bool,
+    pad_value: str,
 ) -> int:
     """Process a single image through the full pipeline. Returns detection count."""
     image_name = Path(image_path).name
@@ -241,7 +248,7 @@ def process_single_image(
     spacing_xyz = preprocessed.GetSpacing()
     print(f"      preprocessing done  ({time.time() - t0:.2f}s)", flush=True)
 
-    volume_padded, original_shape = pad_volume_to_patch_size(volume, patch_size)
+    volume_padded, original_shape = pad_volume_to_patch_size(volume, patch_size, pad_value=pad_value)
     if volume_padded.shape != original_shape:
         print(
             f"      padded volume for inference: {original_shape} -> {volume_padded.shape}",
