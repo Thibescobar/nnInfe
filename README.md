@@ -79,14 +79,15 @@ nninfe/
 │   └── data/                          # ⚠ NOT TRACKED IN GIT — see below
 └── tests/
     ├── test_anchors.py                # Detection anchor generation
-    ├── test_sliding_window.py         # Shared sliding-window logic
-    ├── test_postprocessing.py         # Detection post-processing
+    ├── test_cli.py                    # Common CLI validation helpers
     ├── test_export.py                 # Detection export and mask helpers
     ├── test_export_scaling.py         # Detection coordinate scaling
-    ├── test_preprocessing.py          # Shared preprocessing helpers
-    ├── test_session.py                # Session creation and inference helpers
     ├── test_integration.py            # Detection end-to-end with mocked session
-    └── test_segmentation.py           # Segmentation plan + reconstruction + export
+    ├── test_postprocessing.py         # Detection post-processing
+    ├── test_preprocessing.py          # Shared preprocessing helpers
+    ├── test_segmentation.py           # Segmentation plan + reconstruction + export
+    ├── test_session.py                # Session creation and inference helpers
+    └── test_sliding_window.py         # Shared sliding-window logic
 ```
 
 ### `data/` folder (external, not versioned)
