@@ -1,0 +1,16 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install dependencies packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml README.md ./
+COPY nninfe/ nninfe/
+
+# Install the package with the openvino extra
+RUN pip install --no-cache-dir ".[openvino]"
+
+CMD ["nninfe-det", "--help"]
