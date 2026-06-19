@@ -285,6 +285,7 @@ nninfe-seg \
 | Argument | Default | Description |
 |----------|---------|-------------|
 | `--overlap` | `0.5` | Minimum overlap ratio between adjacent patches (0 = no overlap, 0.5 = 50%, <1.0). Actual overlap may be slightly higher to fit the image boundaries. |
+| `--pad-value` | `0.0` | Padding value to use when original image is smaller than the patch size. Can be a number or `min` to use the minimum value of the image minus 1. |
 
 ### Post-processing for detection
 
