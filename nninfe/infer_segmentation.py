@@ -55,6 +55,7 @@ def process_single_image(
     plan_inference: dict,
     patch_size: tuple,
     overlap: float,
+    pad_value: str = "0.0",
 ) -> str:
     """Process one image and return output mask path."""
     image_name = Path(image_path).name
@@ -70,7 +71,7 @@ def process_single_image(
     volume = sitk.GetArrayFromImage(preprocessed_for_infer)
     print(f"      preprocessing done  ({time.time() - t0:.2f}s)", flush=True)
 
-    volume_for_infer, original_shape = pad_volume_to_patch_size(volume, patch_size)
+    volume_for_infer, original_shape = pad_volume_to_patch_size(volume, patch_size, pad_value=pad_value)
     if volume_for_infer.shape != volume.shape:
         print(
             f"      padded volume for inference: {volume.shape} -> {volume_for_infer.shape}",
@@ -128,6 +129,11 @@ def main() -> None:
     parser.add_argument("--image-dir", help="Path to a directory of NIfTI images")
     parser.add_argument("--output-dir", help="Output directory for segmentation masks")
     parser.add_argument("--overlap", type=float, default=0.5, help="Sliding-window overlap in [0,1)")
+    parser.add_argument(
+        "--pad-value",
+        default="0.0",
+        help="Padding value to use. Can be a number or 'min' to use the minimum value of the image minus 1 (default: 0.0)",
+    )
     parser.add_argument(
         "--backend",
         choices=list(BACKENDS.keys()),
@@ -221,6 +227,7 @@ def main() -> None:
             plan_inference=plan_inference,
             patch_size=patch_size,
             overlap=args.overlap,
+            pad_value=args.pad_value,
         )
         summary.append((image_name, out_mask))
 

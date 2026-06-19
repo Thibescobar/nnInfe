@@ -173,8 +173,23 @@ def test_pad_volume_to_patch_size_uses_min_minus_one():
         dtype=np.float32,
     )
 
-    padded, original_shape = pad_volume_to_patch_size(volume, patch_size_zyx=(3, 3, 3))
+    padded, original_shape = pad_volume_to_patch_size(volume, patch_size_zyx=(3, 3, 3), pad_value="min")
 
     assert original_shape == (2, 2, 2)
     assert padded.shape == (3, 3, 3)
     assert padded[2, 2, 2] == np.float32(2.0)
+
+def test_pad_volume_to_patch_size_default():
+    volume = np.array(
+        [
+            [[3.0, 4.0], [5.0, 6.0]],
+            [[7.0, 8.0], [9.0, 10.0]],
+        ],
+        dtype=np.float32,
+    )
+
+    padded, original_shape = pad_volume_to_patch_size(volume, patch_size_zyx=(3, 3, 3))
+
+    assert original_shape == (2, 2, 2)
+    assert padded.shape == (3, 3, 3)
+    assert padded[2, 2, 2] == np.float32(0.0)
