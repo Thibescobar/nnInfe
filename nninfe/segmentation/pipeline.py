@@ -72,7 +72,8 @@ def pad_volume_to_patch_size(
 
     if any(tail > 0 for _, tail in pad_width):
         if constant_value is None:
-            constant_value = float(np.min(volume_zyx)) - 1.0
+            # constant_value = float(np.min(volume_zyx)) - 1.0
+            constant_value = 0.0
         padded = np.pad(volume_zyx, pad_width=pad_width, mode="constant", constant_values=constant_value)
         return padded, original_shape
 
