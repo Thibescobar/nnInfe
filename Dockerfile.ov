@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install dependencies (SimpleITK might need some system packages)
+# Install dependencies packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/*
@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml README.md ./
 COPY nninfe/ nninfe/
 
-RUN pip install --no-cache-dir ".[cpu]"
+# Install the package with the openvino extra
+RUN pip install --no-cache-dir ".[openvino]"
 
 CMD ["nninfe-det", "--help"]
