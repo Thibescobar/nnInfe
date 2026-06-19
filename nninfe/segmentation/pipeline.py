@@ -58,29 +58,6 @@ def extract_plan_inference(plans: dict, configuration: str = "3d_fullres") -> di
     return normalized_plan
 
 
-def pad_volume_to_patch_size(
-    volume_zyx: np.ndarray,
-    patch_size_zyx: Tuple[int, int, int],
-    pad_value: Union[float, str] = 0.0,
-) -> Tuple[np.ndarray, Tuple[int, int, int]]:
-    """Pad at the end of each axis so dimensions are at least patch size."""
-    original_shape = tuple(int(v) for v in volume_zyx.shape)
-    pad_width = []
-    for dim, patch in zip(original_shape, patch_size_zyx):
-        tail = max(0, patch - dim)
-        pad_width.append((0, tail))
-
-    if any(tail > 0 for _, tail in pad_width):
-        if isinstance(pad_value, str) and pad_value.lower() == "min":
-            constant_value = float(np.min(volume_zyx)) - 1.0
-        else:
-            constant_value = float(pad_value)
-        padded = np.pad(volume_zyx, pad_width=pad_width, mode="constant", constant_values=constant_value)
-        return padded, original_shape
-
-    return volume_zyx, original_shape
-
-
 def crop_volume_to_shape(
     volume_zyx: np.ndarray,
     shape_zyx: Tuple[int, int, int],

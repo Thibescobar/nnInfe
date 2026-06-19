@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/python-≥3.9-blue)
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
 ![CI](https://img.shields.io/badge/CI-GitHub%20Actions-blue)
-![Tests](https://img.shields.io/badge/tests-107%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-120%20passed-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-95%25-brightgreen)
 ![Linting](https://img.shields.io/badge/linting-ruff-purple)
 

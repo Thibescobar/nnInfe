@@ -14,7 +14,7 @@ import SimpleITK as sitk
 
 from nninfe.common.cli import collect_nifti_inputs
 from nninfe.common.io import read_image_metadata, resample_mask_to_reference
-from nninfe.common.preprocessing import preprocess_image
+from nninfe.common.preprocessing import pad_volume_to_patch_size, preprocess_image
 from nninfe.common.session import BACKENDS, create_session, parse_outputs, run_inference
 from nninfe.common.sliding_window import compute_patch_positions, extract_patch
 from nninfe.detection.anchors import compute_anchors
@@ -32,7 +32,6 @@ from nninfe.detection.postprocessing import (
     postprocess,
     translate_boxes,
 )
-from nninfe.segmentation.pipeline import pad_volume_to_patch_size
 
 
 def main() -> None:
