@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from nndet_onnx.nndet_onnx_inference_sw import (
+from nninfe.common.sliding_window import (
     compute_patch_positions,
     extract_patch,
 )

@@ -8,7 +8,7 @@ build/
 .eggs/
 
 # Data (large binaries, provided separately)
-nndet_onnx/data/
+nninfe/data/
 
 # Testing
 .pytest_cache/

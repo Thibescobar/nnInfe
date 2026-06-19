@@ -1,16 +1,39 @@
-# nnDet ONNX Inference Pipeline
+# ONNX Inference Pipeline for nnDetection & nnUNet
 
 ![Python](https://img.shields.io/badge/python-≥3.9-blue)
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
 ![CI](https://img.shields.io/badge/CI-GitHub%20Actions-blue)
-![Tests](https://img.shields.io/badge/tests-99%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-120%20passed-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-95%25-brightgreen)
 ![Linting](https://img.shields.io/badge/linting-ruff-purple)
 
-Standalone inference pipeline for **nnDetection** (3D medical object detection) exported to ONNX.
-Runs a RetinaUNet 3D model with sliding window on volumes, without any dependency on nnDetection or PyTorch.
+Standalone ONNX inference pipeline for **nnDetection** (3D medical object detection) and **nnUNet** (3D medical image segmentation).
+Runs RetinaUNet 3D and U-Net-based models using sliding window on full volumes, without any dependency on nnDetection, nnUNet, or PyTorch.
 
-> **Goal**: This Python project serves as the functional specification for a future **C++ port** using ITK + ONNX Runtime / TensorRT. It could be used as is as well because self-contained.
+> **Goal**: This Python project initially serves as the functional specification for a **C++ port** using ITK + ONNX Runtime, and TensorRT. It could be used as is as well because it is self-contained.
+
+---
+
+## Citation
+
+If you use this package in your product, research, or publications, please cite or refer to it as:
+
+> Escobar, Thibault (2026). **nnInfe: A standalone ONNX inference pipeline optimized for nnDetection and nnUNet**. GitHub.
+
+Suggested BibTeX entry:
+
+```bibtex
+@software{escobar2026nninfe,
+  title = {nninfe: A standalone ONNX inference pipeline for nnDetection and nnUNet},
+  author = {Escobar, Thibault},
+  year = {2026},
+  publisher = {GitHub},
+  url = {https://github.com/Thibescobar/nnInfe},
+  license = {Apache-2.0}
+}
+```
+
+Please also cite the original nnDetection, nnUNet, ONNX Runtime, and other upstream tools when applicable.
 
 ---
 
@@ -35,7 +58,7 @@ Runs a RetinaUNet 3D model with sliding window on volumes, without any dependenc
 ## Project Structure
 
 ```
-mvpDet/
+nninfe/
 ├── .gitignore                         # Git ignore rules
 ├── pyproject.toml                     # Package config, dependencies, ruff & pytest settings
 ├── LICENSE                            # Apache 2.0
@@ -43,33 +66,36 @@ mvpDet/
 ├── .github/
 │   └── workflows/
 │       └── ci.yml                     # GitHub Actions CI (lint + test, Python 3.9 & 3.11)
-├── nndet_onnx/
+├── nninfe/
 │   ├── __init__.py
-│   ├── nndet_onnx_inference_sw.py     # Main inference script (~1195 lines)
+│   ├── infer_detection.py     # Detection CLI
+│   ├── infer_segmentation.py    # Segmentation CLI
+│   ├── common/                        # Shared preprocessing, sliding-window, I/O, session
+│   ├── detection/                     # Detection-specific anchors, post-processing, export
+│   ├── segmentation/                  # Segmentation-specific plan, reconstruction
 │   ├── tools/
-│   │   ├── nndet_pkl_to_json.py       # Convert plan_inference.pkl → JSON (one-shot)
-│   │   └── nndet_onnx_shape_inference.py  # ONNX shape inference for TRT (one-shot)
-│   ├── notes/
-│   │   └── NOTES_REVIEW_SW.md         # Development notes & history
-│   └── data/                          # ⚠ NOT IN GIT — see below
+│   │   ├── pkl_to_json.py       # Convert plan_inference.pkl → JSON (one-shot)
+│   │   └── onnx_shape_inference.py  # ONNX shape inference for TRT (one-shot)
+│   └── data/                          # ⚠ NOT TRACKED IN GIT — see below
 └── tests/
-    ├── test_anchors.py                # Anchor generation (13 tests)
-    ├── test_sliding_window.py         # Sliding window & patch extraction (8 tests)
-    ├── test_postprocessing.py         # NMS, filtering, merging (30 tests)
-    ├── test_export.py                 # Mask, resampling, export formats (14 tests)
-    ├── test_export_scaling.py         # Coordinate scaling in exports (8 tests)
-    ├── test_preprocessing.py          # Resample, clip, normalize (9 tests)
-    ├── test_session.py                # Session creation, inference, NMS backends (9 tests)
-    └── test_integration.py            # End-to-end with mocked session (8 tests)
+    ├── test_anchors.py                # Detection anchor generation
+    ├── test_sliding_window.py         # Shared sliding-window logic
+    ├── test_postprocessing.py         # Detection post-processing
+    ├── test_export.py                 # Detection export and mask helpers
+    ├── test_export_scaling.py         # Detection coordinate scaling
+    ├── test_preprocessing.py          # Shared preprocessing helpers
+    ├── test_session.py                # Session creation and inference helpers
+    ├── test_integration.py            # Detection end-to-end with mocked session
+    └── test_segmentation.py           # Segmentation plan + reconstruction + export
 ```
 
 ### `data/` folder (external, not versioned)
 
-All file paths are passed via CLI arguments (`--model-path`, `--plan-path`, `--image-path`, etc.), so **you can store your model and images anywhere on your system**. The `data/` folder inside `nndet_onnx/` is simply a convenience location used during development and is excluded from the git repository.
+All file paths are passed via CLI arguments (`--model-path`, `--plan-path`, `--image-path`, etc.), so **you can store your model and images anywhere on your system**. The `data/` folder inside `nninfe/` is simply a convenience location used during development and is excluded from the git repository.
 
 Required files to run inference:
-- An ONNX model file (`.onnx`) — passed via `--model-path`
-- An inference config (`plan_inference.json`) — passed via `--plan-path`
+- An ONNX model file (`.onnx`) — passed via `--model-path`.
+- An inference config file (`.json`) — passed via `--plan-path` (e.g.`plan_inference.json` for detection, `plans.json` for segmentation).
 
 Optional / auto-generated:
 - `trt_engine_cache_fp16/` — TensorRT compiled engines, created automatically next to the model on first TRT run. Specific to GPU architecture (e.g. sm86 for RTX 3070), regenerated if missing.
@@ -100,21 +126,23 @@ Optional (for `--nms-backend nndet`):
 | `cuda` | ❌ | ✅ |
 | `trt` | ❌ | ✅ |
 
-> **Important:** `onnxruntime`, `onnxruntime-gpu`, and `onnxruntime-openvino` are **mutually exclusive** pip packages — they all install to the same `onnxruntime` namespace. Installing one silently overwrites the other.
+> **Important:** `onnxruntime`, `onnxruntime-gpu`, and `onnxruntime-openvino` are **mutually exclusive** pip packages and they all install to the same `onnxruntime` namespace. Installing one silently overwrites the other.
+
+> **Support on Windows:** It has been tested for the CPU backend for development convenience, and the installation steps apply only to green-checkmarked configurations. However, small efforts to the installation and configuration would be enough to enable all backends on Windows and even other operating systems easily.
 
 ### CPU environment (all platforms)
 
 ```bash
-conda create -n nnDetPy39 python=3.9
-conda activate nnDetPy39
+conda create -n nnInfe python=3.9
+conda activate nnInfe
 pip install -e ".[cpu]"
 ```
 
 ### OpenVINO environment (Linux only)
 
 ```bash
-conda create -n nnDetPy39-ov python=3.9
-conda activate nnDetPy39-ov
+conda create -n nnInfe-ov python=3.9
+conda activate nnInfe-ov
 pip install -e ".[openvino]"
 ```
 
@@ -123,14 +151,14 @@ Supports backends: `cpu`, `openvino`.
 ### GPU environment (Linux only)
 
 ```bash
-conda create -n nnDetPy39-trt python=3.9
-conda activate nnDetPy39-trt
+conda create -n nnInfe-trt python=3.9
+conda activate nnInfe-trt
 pip install -e .
 pip install onnxruntime-gpu \
   --index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-11/pypi/simple/
 conda install cudnn=8
-pip install tensorrt==10.3.0
-pip install nvidia-cuda-runtime-cu12==12.2.2 nvidia-cublas-cu12==12.2.5.6
+pip install tensorrt==10.3.0 tensorrt-cu12_bindings==10.3.0 tensorrt-cu12_libs==10.3.0
+pip install nvidia-cuda-runtime-cu12==12.2.140 nvidia-cublas-cu12==12.2.5.6
 ```
 
 > `onnxruntime-gpu` is installed manually because the CUDA version depends on your driver. Always install it **after** `pip install -e .`.
@@ -166,32 +194,21 @@ Supports backends: `cpu`, `cuda`, `trt`.
 
 ## Quick Start
 
-### 1. Prepare model files (if needed)
+### Prepare model files (if needed)
 
-Convert the inference plan from nnDetection's pickle format to JSON:
+Using tools, convert the inference plan from pickle format to JSON and add intermediate shapes to the ONNX model (often required for TRT backend).
 
-```bash
-python nndet_onnx/tools/nndet_pkl_to_json.py \
-  --pkl /path/to/plan_inference.pkl \
-  --output /path/to/plan_inference.json
-```
 
-Add intermediate shapes to the ONNX model (required for TRT backend):
+### Run inference
 
-```bash
-python nndet_onnx/tools/nndet_onnx_shape_inference.py \
-  --input /path/to/model_onnx.onnx \
-  --output /path/to/model_onnx_shaped.onnx
-```
-
-### 2. Run inference
+**Detection (nnDetection):**
 
 Single image with TRT FP16 (fastest):
 
 ```bash
-conda activate nnDetPy39-trt
-nndet-infer \
-  --model-path /path/to/model_onnx_shaped.onnx \
+conda activate nnInfe-trt
+nninfe-det \
+  --model-path /path/to/model_onnx(_shaped).onnx \
   --plan-path /path/to/plan_inference.json \
   --image-path /path/to/image.nii.gz \
   --output-dir /path/to/output \
@@ -201,8 +218,8 @@ nndet-infer \
 Batch mode (all NIfTI in a directory):
 
 ```bash
-nndet-infer \
-  --model-path /path/to/model_onnx_shaped.onnx \
+nninfe-det \
+  --model-path /path/to/model_onnx(_shaped).onnx \
   --plan-path /path/to/plan_inference.json \
   --image-dir /path/to/images/ \
   --output-dir /path/to/output \
@@ -212,13 +229,30 @@ nndet-infer \
 CPU only (no GPU required):
 
 ```bash
-conda activate nnDetPy39
-nndet-infer \
+conda activate nnInfe
+nninfe-det \
   --model-path /path/to/model_onnx.onnx \
   --plan-path /path/to/plan_inference.json \
   --image-path /path/to/image.nii.gz \
   --output-dir /path/to/output \
   --backend cpu
+```
+
+**Segmentation (nnUNet):**
+
+Single image with TRT FP16:
+
+> Only this example, other execution capabilities analogous to detection.
+
+```bash
+conda activate nnInfe-trt
+nninfe-seg \
+  --model-path /path/to/model_onnx_shaped.onnx \
+  --plan-path /path/to/plans.json \
+  --configuration <config_value> \
+  --image-path /path/to/image.nii.gz \
+  --output-dir /path/to/output \
+  --backend trt --trt-fp16
 ```
 
 ---
@@ -229,8 +263,8 @@ nndet-infer \
 
 | Argument | Description |
 |----------|-------------|
-| `--model-path` | Path to the ONNX model (`.onnx`). Use `model_onnx_shaped.onnx` for TRT. |
-| `--plan-path` | Path to `plan_inference.json` (inference configuration). |
+| `--model-path` | Path to the ONNX model (`.onnx`). Prefer using `model_onnx_shaped.onnx` for TRT. |
+| `--plan-path` | Path to `plan_inference.json` (detection) or `plans.json` (configuration file). |
 
 ### Image input (one required, mutually exclusive)
 
@@ -243,16 +277,17 @@ nndet-infer \
 
 | Argument | Description |
 |----------|-------------|
-| `--output-dir` | Output directory. Per image: `{name}_mask.nii.gz`, `{name}_boxes.json`, `{name}_boxes.csv`. |
-| `--export-pkl` | Also export `{name}_boxes.pkl` (nnDetection-compatible, for validation with `nndet_boxes2nii`). |
+| `--output-dir` | Output directory. |
+| `--export-pkl` | Also export `{name}_boxes.pkl` for detection (nnDetection-compatible, for validation with `nndet_boxes2nii`). |
 
 ### Sliding Window
 
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `--overlap` | `0.5` | Minimum overlap ratio between adjacent patches (0 = no overlap, 0.5 = 50%). Actual overlap may be slightly higher due to rounding. |
+| `--overlap` | `0.5` | Minimum overlap ratio between adjacent patches (0 = no overlap, 0.5 = 50%, <1.0). Actual overlap may be slightly higher to fit the image boundaries. |
+| `--pad-value` | `0.0` | Padding value to use when original image is smaller than the patch size. Can be a number or `min` to use the minimum value of the image minus 1. |
 
-### Post-processing
+### Post-processing for detection
 
 | Argument | Default | Description |
 |----------|---------|-------------|
@@ -270,31 +305,39 @@ nndet-infer \
 | `--trt-fp16` | off | Enable FP16 inference for TensorRT. |
 | `--build-engine-only` | off | Build TRT engine cache and exit (no image/output needed). |
 
----
+### `nninfe-seg configuration` 
+
+| Argument | Description |
+|----------|-------------|
+| `--configuration` | Plan configuration name (default: `3d_fullres`). |
+
 
 ## Pipeline Architecture
 
-The pipeline processes each image through 5 steps:
+### Detection Pipeline Architecture (nnDetection)
+
+The pipeline processes each detection image through 5 steps:
 
 ```
 [1/5] Anchor generation
-  └── Compute 284,796 anchors per patch from plan config (strides, decoder levels, anchor sizes)
+  └── Compute the anchors per patch from plan config (strides, decoder levels, anchor sizes)
 
 [2/5] Preprocessing
-  ├── Resample to target spacing (ZYX from plan)
+  ├── Resample to target spacing (ZYX from plan), mapping axes through transpose_forward if provided
   ├── Clip intensity (percentile 0.5 – 99.5 from plan)
   └── Normalize (z-score with mean/std from plan)
 
 [3/5] Sliding window
+  ├── Automatic padding (with minimum pixel value - 1) if the resampled image is smaller than patch size
   ├── Compute uniform patch positions with overlap ≥ requested
   └── Extract patches (size read from plan_inference.json, e.g. [64, 96, 96] ZYX)
 
 [4/5] Batched inference
   ├── Group patches into batches (batch size read from ONNX model input shape)
   ├── Pad last batch by repeating final patch
-  ├── Run ONNX inference → 12 output tensors (4×boxes, 4×scores, 4×labels)
-  ├── Per-patch post-processing: score filter → size filter → NMS
+  ├── Run ONNX inference
   ├── Gaussian weighting (for NMS priority only, original scores preserved)
+  ├── Per-patch post-processing: score filter → size filter → NMS
   └── Translate boxes to global image coordinates
 
 [5/5] Merge + export
@@ -302,6 +345,26 @@ The pipeline processes each image through 5 steps:
   ├── Global NMS (optional, enabled by default)
   ├── Restore original (unweighted) scores
   └── Export: mask NIfTI + JSON + CSV (+ optional PKL)
+```
+
+### Segmentation Pipeline Architecture (nnUNet)
+
+The pipeline processes each segmentation image through 3 main steps:
+
+```
+[1/3] Preprocessing
+  ├── Resample to target spacing (ZYX from plan), mapping axes through transpose_forward if provided
+  ├── Flip axes to model expected orientation (if applicable)
+  └── Pad volume (with minimum pixel value - 1) if smaller than patch size
+
+[2/3] Sliding Window Inference
+  ├── Predict patches in batches
+  └── Accumulate output logits into a global volume using a 3D gaussian importance map
+
+[3/3] Reconstruction & Export
+  ├── Crop padded boundaries to restore original shape
+  ├── Compute argmax across class probabilities to generate the final mask
+  └── Resample mask back to original reference geometry and export
 ```
 
 ### Key design points
@@ -315,7 +378,7 @@ The pipeline processes each image through 5 steps:
 
 ## Axis Conventions
 
-> This is the single most important section for avoiding bugs during the C++ port.
+> This is the single tricky section (for avoiding bugs during the C++ port for instance).
 
 ### nnDetection internal convention
 - **dim0 = Z** (axial slices), **dim1 = Y** (anterior-posterior), **dim2 = X** (left-right)
@@ -345,9 +408,9 @@ Named constants in code: `D0_MIN=0, D1_MIN=1, D0_MAX=2, D1_MAX=3, D2_MIN=4, D2_M
 
 ## Input / Output Formats
 
-### Input: `plan_inference.json`
+### Input: `plan_inference.json` (Detection)
 
-Converted from nnDetection's `plan_inference.pkl` using `tools/nndet_pkl_to_json.py`.
+Converted from nnDetection's `plan_inference.pkl` using `tools/pkl_to_json.py`.
 
 ```json
 {
@@ -380,7 +443,11 @@ Converted from nnDetection's `plan_inference.pkl` using `tools/nndet_pkl_to_json
 
 All ZYX-ordered. `anchors.width` ↔ dim0 (Z), `height` ↔ dim1 (Y), `depth` ↔ dim2 (X).
 
-### Output: `{name}_boxes.json`
+### Input: `plans.json` (Segmentation)
+
+For segmentation tasks, supply the raw `plans.json` converted from the `plans.pkl` outputted by nnUNet natively at the training step. Selecting the correct inner config is done by supplying `--configuration` (defaults to `3d_fullres`) during inference. It handles spacing, patch sizes, and required axes flips naturally.
+
+### Output: `{name}_boxes.json` (Detection)
 
 nnDetection-compatible format. Boxes are scaled to the **original image** voxel space.
 
@@ -413,10 +480,16 @@ size_x_mm, size_y_mm, size_z_mm, volume_mm3
 Pickle dict with numpy arrays, compatible with nnDetection CLI tools (`nndet_boxes2nii`).
 Same structure as the JSON but with `np.float32` / `np.int64` arrays instead of lists.
 
-### Output: `{name}_mask.nii.gz`
+### Output: `{name}_mask.nii.gz` (Detection)
 
 NIfTI label map where each detection is a connected component with a unique integer label.
 Resampled to the **original image geometry** (spacing, origin, direction, size) using nearest-neighbor interpolation, so it can be directly overlaid on the source image in any compatible viewer.
+
+>This mask corresponds to boxes, not to segmentation contours.
+
+### Output: `{name}_seg.nii.gz` (Segmentation)
+
+A voxel-level label map where integer values represent semantic classes as defined in standard nnUNet exports. Re-sampled natively back to the input reference image's spacing and geometry.
 
 ---
 
@@ -425,19 +498,18 @@ Resampled to the **original image geometry** (spacing, origin, direction, size) 
 | Backend | Provider chain | Model file | Conda env |
 |---------|---------------|------------|-----------|
 | `cpu` | CPU | `model_onnx.onnx` | either |
-| `openvino` | OpenVINO → CPU | `model_onnx.onnx` | nnDetPy39-ov (Linux only) |
-| `cuda` | CUDA → CPU | `model_onnx.onnx` | nnDetPy39-trt |
-| `trt` | TensorRT → CUDA → CPU | `model_onnx_shaped.onnx` | nnDetPy39-trt |
+| `openvino` | OpenVINO → CPU | `model_onnx.onnx` | nnInfe-ov |
+| `cuda` | CUDA → CPU | `model_onnx.onnx` | nnInfe-trt |
+| `trt` | TensorRT → CUDA → CPU | `model_onnx_shaped.onnx` | nnInfe-trt |
 
-- **TRT requires** the shaped model (`onnx.shape_inference` applied). See [Preparation Tools](#preparation-tools).
-- Use `--trt-fp16` for FP16 precision (recommended, same results, ×2 speedup vs TRT FP32).
+- Use `--trt-fp16` for FP16 precision (recommended, fonctionnaly same results, ×2+ speedup vs TRT FP32).
 - Use `--build-engine-only` to pre-compile engines without running inference.
 
 ---
 
 ## TensorRT Engine Cache
 
-On first run with `--backend trt`, ONNX Runtime compiles the model into multiple TRT sub-engines. This takes ~2 minutes. The engines are cached in `trt_engine_cache_{precision}/` next to the model.
+ONNX Runtime compiles the model into a TRT engine or multiple TRT sub-engines. This takes ~2-5 minutes. The engines are cached in `trt_engine_cache_{precision}/` next to the model.
 
 ```
 data/model/trt_engine_cache_fp16/
@@ -447,46 +519,20 @@ data/model/trt_engine_cache_fp16/
 
 **Important**: The cache is tied to:
 - GPU architecture (e.g., sm86 for RTX 3070)
-- TensorRT version (10.3)
-- ONNX model (hash-based)
+- TensorRT version (e.g., 10.3)
+- ONNX model, hash-based
 
-Changing any of these requires rebuilding the cache (`--build-engine-only`).
+Changing any of these requires rebuilding the cache (lazy or `--build-engine-only`).
 
 > **Tip:** The `.engine` files are large and machine-specific, but the `.timing` file is lightweight and reusable. Keeping only the `.timing` file allows TensorRT to skip the autotuning phase during rebuild, significantly reducing compilation time.
 
-**Why multiple engines?** ONNX Runtime splits the graph into TRT-supported sub-graphs + CUDA fallback for unsupported ops (ScatterND, NonZero). For the C++ port, a single unified engine is preferred — see notes on hybrid architecture in `notes/NOTES_REVIEW_SW.md`.
-
----
-
-## Preparation Tools
-
-### Convert `plan_inference.pkl` → JSON
-
-One-shot conversion of nnDetection's training plan to JSON (readable by C++ / nlohmann::json).
-
-```bash
-python tools/nndet_pkl_to_json.py \
-  --pkl /path/to/plan_inference.pkl \
-  --output data/model/plan_inference.json
-```
-
-### ONNX Shape Inference (required for TRT)
-
-Annotates intermediate tensor shapes in the ONNX graph. Required by TensorRT.
-
-```bash
-python tools/nndet_onnx_shape_inference.py \
-  --input data/model/model_onnx.onnx \
-  --output data/model/model_onnx_shaped.onnx
-```
-
-Requires: `pip install onnx`
+>**Why multiple engines?** ONNX Runtime splits the graph into TRT-supported sub-graphs + CUDA fallback for unsupported ops (ScatterND, NonZero). A single unified engine is preferred if possible (speed, size, maintainability).
 
 ---
 
 ## Benchmarks
 
-Measured on a single CT scan (294 patches, 74 batches, overlap 0.5, score-thresh 0.5) with an RTX 3070.
+Done for detection. Measured on a single CT scan (294 patches, 74 batches, overlap 0.5, score-thresh 0.5) with an RTX 3070.
 
 | Backend | Inference | Total | s/batch | Speedup vs CPU | Detections |
 |---------|-----------|-------|---------|----------------|------------|
@@ -495,20 +541,16 @@ Measured on a single CT scan (294 patches, 74 batches, overlap 0.5, score-thresh
 | `cuda` | 14s | 16s | 0.19 | ×15.6 | 26 |
 | `trt --trt-fp16` | 6s | 8s | 0.08 | **×36.9** | 26 |
 
-All backends produce **26 detections** — results are consistent across backends (negligible numerical variation).
+All backends produce **26 detections** — results are consistent across backends (negligible numerical variations).
 
 ---
 
 ## Limitations & Known Issues
 
-- **Single class**: The current model detects one class only (label 0). Multi-class support would require per-class NMS. Patched soon.
-- **Image must be ≥ patch_size after resampling**: If any resampled dimension is smaller than the patch size defined in `plan_inference.json`, the pipeline exits with an error. Patched soon.
-- **No DICOM input**: Input must be NIfTI (`.nii` or `.nii.gz`). DICOM→NIfTI conversion should be done upstream. Patched soon.
-- **Mask is bounding-box based**: The output mask fills detection bounding boxes, not a pixel-level segmentation. Enhanced soon.
-- **Single fold**: Uses one fold only. Multi-fold ensemble was intentionally deferred for industrialization simplicity and speed.
-
-### Deferred to post-MVP (before production)
-
+- **Multiple classes for detection**: Detection currently exposes class output natively mapped (label 0, etc). Multi-class might require specific per-class NMS tracking in nnDetection pipelines if custom configuration differs.
+- **No DICOM handling**: Input must be NIfTI (`.nii` or `.nii.gz`). DICOM→NIfTI conversion should be done upstream. Patched soon.
+- **Mask is bounding-box based for detection**: While the native nnDetection framework give the possibility to output segmentation contours for some detected objects (not all), the output mask for the present detection pipeline (`_mask.nii.gz`) fills bounding boxes. Pixel-level contours is reserved for the segmentation pipeline for the moment. Could be patched if there are needs.
+- **Single fold**: Uses one fold only. Multi-fold ensemble was intentionally deferred for industrialization simplicity and speed across both detection and segmentation.
 - **Structured logging**: Currently all output is `print()`. Production should use Python `logging` with levels (DEBUG/INFO/WARNING).
 - **Pipeline versioning**: Exports (JSON/CSV/PKL) should include a pipeline version number for traceability (medical device regulation).
 - **ONNX Runtime error handling**: No try/except around session creation or inference. GPU OOM, driver mismatch, or engine incompatibility will produce raw Python exceptions.
@@ -530,7 +572,7 @@ pip install -e ".[dev]"
 
 ```bash
 # Lint
-ruff check nndet_onnx/ tests/
+ruff check nninfe/ tests/
 
 # Run tests
 python -m pytest tests/ -v

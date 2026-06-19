@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 import SimpleITK as sitk
 
-from nndet_onnx.nndet_onnx_inference_sw import process_single_image
+from nninfe.infer_detection import process_single_image
 
 
 def _make_plan():
@@ -72,7 +72,7 @@ class TestProcessSingleImage:
             np.zeros((0,), dtype=np.int64),
         ]
 
-        from nndet_onnx.nndet_onnx_inference_sw import compute_anchors
+        from nninfe.detection.anchors import compute_anchors
         anchors_batch = compute_anchors(plan, patch_size, batch_size)
 
         output_dir = tmp_path / "results"
@@ -92,6 +92,7 @@ class TestProcessSingleImage:
             nms_backend="numpy",
             no_global_nms=False,
             export_pkl=False,
+            pad_value="0.0",
         )
 
         assert isinstance(result, int)
@@ -125,7 +126,7 @@ class TestProcessSingleImage:
 
         mock_session.run.side_effect = fake_run
 
-        from nndet_onnx.nndet_onnx_inference_sw import compute_anchors
+        from nninfe.detection.anchors import compute_anchors
         anchors_batch = compute_anchors(plan, patch_size, batch_size)
         output_dir = tmp_path / "results"
 
@@ -144,6 +145,7 @@ class TestProcessSingleImage:
             nms_backend="numpy",
             no_global_nms=False,
             export_pkl=True,
+            pad_value="0.0",
         )
 
         assert result > 0
@@ -166,7 +168,7 @@ class TestProcessSingleImage:
             np.zeros((0,), dtype=np.int64),
         ]
 
-        from nndet_onnx.nndet_onnx_inference_sw import compute_anchors
+        from nninfe.detection.anchors import compute_anchors
         anchors_batch = compute_anchors(plan, patch_size, batch_size)
         output_dir = tmp_path / "results"
 
@@ -185,17 +187,18 @@ class TestProcessSingleImage:
             nms_backend="numpy",
             no_global_nms=True,
             export_pkl=False,
+            pad_value="0.0",
         )
         assert isinstance(result, int)
 
 
 class TestMain:
-    @patch("nndet_onnx.nndet_onnx_inference_sw.create_session")
+    @patch("nninfe.infer_detection.create_session")
     def test_main_single_image(self, mock_create_session, tmp_path):
         """main() with a single image in minimal mode."""
         import json
 
-        from nndet_onnx.nndet_onnx_inference_sw import main
+        from nninfe.infer_detection import main
 
         # Write plan
         plan = _make_plan()
@@ -241,12 +244,12 @@ class TestMain:
 
         assert Path(output_dir).exists()
 
-    @patch("nndet_onnx.nndet_onnx_inference_sw.create_session")
+    @patch("nninfe.infer_detection.create_session")
     def test_main_build_engine_only(self, mock_create_session, tmp_path):
         """main() with --build-engine-only exits early."""
         import json
 
-        from nndet_onnx.nndet_onnx_inference_sw import main
+        from nninfe.infer_detection import main
 
         plan = _make_plan()
         plan_path = str(tmp_path / "plan.json")
@@ -276,12 +279,12 @@ class TestMain:
         # No inference should have been run
         mock_session.run.assert_not_called()
 
-    @patch("nndet_onnx.nndet_onnx_inference_sw.create_session")
+    @patch("nninfe.infer_detection.create_session")
     def test_main_batch_mode(self, mock_create_session, tmp_path):
         """main() with --image-dir processes multiple images."""
         import json
 
-        from nndet_onnx.nndet_onnx_inference_sw import main
+        from nninfe.infer_detection import main
 
         plan = _make_plan()
         plan_path = str(tmp_path / "plan.json")
@@ -333,7 +336,7 @@ class TestMain:
         """main() exits if model file doesn't exist."""
         import json
 
-        from nndet_onnx.nndet_onnx_inference_sw import main
+        from nninfe.infer_detection import main
 
         plan = _make_plan()
         plan_path = str(tmp_path / "plan.json")
@@ -357,7 +360,7 @@ class TestMain:
         """main() exits if both --image-path and --image-dir given."""
         import json
 
-        from nndet_onnx.nndet_onnx_inference_sw import main
+        from nninfe.infer_detection import main
 
         plan = _make_plan()
         plan_path = str(tmp_path / "plan.json")
@@ -384,3 +387,107 @@ class TestMain:
         ):
             with pytest.raises(SystemExit):
                 main()
+
+    @patch("sys.argv", new_callable=list)
+    def test_main_exits(self, mock_argv, tmp_path):
+        from nninfe.infer_detection import main
+
+        model_path = tmp_path / "model.onnx"
+        plan_path = tmp_path / "plan.json"
+
+        # Missing model
+        mock_argv[:] = ["nninfe-det", "--model-path", str(model_path), "--plan-path", str(plan_path)]
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert "model not found" in str(exc.value)
+
+        # Invalid model ext
+        model_txt = tmp_path / "model.txt"
+        model_txt.write_text("")
+        mock_argv[:] = ["nninfe-det", "--model-path", str(model_txt), "--plan-path", str(plan_path)]
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert "must be .onnx" in str(exc.value)
+
+        # Valid model, missing plan
+        model_onnx = tmp_path / "actual_model.onnx"
+        model_onnx.write_text("")
+        mock_argv[:] = ["nninfe-det", "--model-path", str(model_onnx), "--plan-path", str(plan_path)]
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert "plan not found" in str(exc.value)
+
+        # Invalid plan ext
+        plan_txt = tmp_path / "plan.txt"
+        plan_txt.write_text("")
+        mock_argv[:] = ["nninfe-det", "--model-path", str(model_onnx), "--plan-path", str(plan_txt)]
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert "must be .json" in str(exc.value)
+
+        # Missing output dir
+        actual_plan = tmp_path / "actual_plan.json"
+        actual_plan.write_text("{}")
+        nifti = tmp_path / "img.nii.gz"
+        nifti.write_text("")
+        mock_argv[:] = ["nninfe-det", "--model-path", str(model_onnx), "--plan-path", str(actual_plan), "--image-path", str(nifti)]
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert "output-dir is required" in str(exc.value)
+
+        # Invalid overlap
+        mock_argv[:] = [
+            "nninfe-det", "--model-path", str(model_onnx), "--plan-path", str(actual_plan),
+            "--image-path", str(nifti), "--output-dir", str(tmp_path), "--overlap", "1.5"
+        ]
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert "overlap must be in" in str(exc.value)
+
+        # Invalid score thresh
+        mock_argv[:] = [
+            "nninfe-det", "--model-path", str(model_onnx), "--plan-path", str(actual_plan),
+            "--image-path", str(nifti), "--output-dir", str(tmp_path), "--score-thresh", "2.0"
+        ]
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert "score-thresh must be in" in str(exc.value)
+
+    @patch("nninfe.infer_detection.create_session")
+    @patch("nninfe.infer_detection.process_single_image")
+    @patch("sys.argv", new_callable=list)
+    def test_main_trt_batch(self, mock_argv, mock_process, mock_create, tmp_path):
+        from nninfe.infer_detection import main
+        import json
+
+        model = tmp_path / "model.onnx"
+        model.write_text("")
+        plan = tmp_path / "plan.json"
+        
+        plan_dict = _make_plan()
+        plan.write_text(json.dumps(plan_dict))
+        
+        # Make batch images
+        d = tmp_path / "imgs"
+        d.mkdir()
+        (d / "1.nii.gz").write_text("")
+        (d / "2.nii.gz").write_text("")
+
+        # Fake cache
+        cache = tmp_path / "trt_engine_cache_fp16"
+        cache.mkdir()
+        (cache / "model.engine").write_text("")
+
+        mock_argv[:] = [
+            "nninfe-det", "--model-path", str(model), "--plan-path", str(plan),
+            "--image-dir", str(d), "--output-dir", str(tmp_path),
+            "--backend", "trt", "--trt-fp16"
+        ]
+
+        mock_session = MagicMock()
+        mock_session.get_inputs.return_value = [MagicMock(shape=[2])]
+        mock_create.return_value = mock_session
+        mock_process.return_value = 1
+
+        main()
+        assert mock_process.call_count == 2
