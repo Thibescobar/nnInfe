@@ -8,8 +8,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml README.md ./
-COPY nndet_onnx/ nndet_onnx/
+COPY nninfe/ nninfe/
 
 RUN pip install --no-cache-dir ".[cpu]"
 
-CMD ["nndet-infer", "--help"]
+CMD ["nninfe-det", "--help"]
