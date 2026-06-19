@@ -11,14 +11,13 @@ import SimpleITK as sitk
 
 from nninfe.common.cli import collect_nifti_inputs
 from nninfe.common.io import resample_mask_to_reference
-from nninfe.common.preprocessing import preprocess_image
+from nninfe.common.preprocessing import pad_volume_to_patch_size, preprocess_image
 from nninfe.common.session import BACKENDS, create_session
 from nninfe.segmentation.pipeline import (
     crop_volume_to_shape,
     export_segmentation_mask,
     extract_plan_inference,
     flip_image_axes,
-    pad_volume_to_patch_size,
     run_sliding_window_segmentation,
 )
 

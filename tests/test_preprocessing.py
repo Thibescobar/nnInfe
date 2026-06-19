@@ -7,6 +7,7 @@ import SimpleITK as sitk
 from nninfe.common.preprocessing import (
     clip_image,
     normalize_image,
+    pad_volume_to_patch_size,
     preprocess_image,
     resample_image,
 )
@@ -142,3 +143,33 @@ class TestPreprocessImage:
         assert "resampled" in captured.out
         assert "clipped" in captured.out
         assert "normalized" in captured.out
+
+def test_pad_volume_to_patch_size_uses_min_minus_one():
+    volume = np.array(
+        [
+            [[3.0, 4.0], [5.0, 6.0]],
+            [[7.0, 8.0], [9.0, 10.0]],
+        ],
+        dtype=np.float32,
+    )
+
+    padded, original_shape = pad_volume_to_patch_size(volume, patch_size_zyx=(3, 3, 3), pad_value="min")
+
+    assert original_shape == (2, 2, 2)
+    assert padded.shape == (3, 3, 3)
+    assert padded[2, 2, 2] == np.float32(2.0)
+
+def test_pad_volume_to_patch_size_default():
+    volume = np.array(
+        [
+            [[3.0, 4.0], [5.0, 6.0]],
+            [[7.0, 8.0], [9.0, 10.0]],
+        ],
+        dtype=np.float32,
+    )
+
+    padded, original_shape = pad_volume_to_patch_size(volume, patch_size_zyx=(3, 3, 3))
+
+    assert original_shape == (2, 2, 2)
+    assert padded.shape == (3, 3, 3)
+    assert padded[2, 2, 2] == np.float32(0.0)

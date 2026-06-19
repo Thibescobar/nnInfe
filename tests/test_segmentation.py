@@ -6,13 +6,17 @@ from unittest.mock import MagicMock
 import numpy as np
 import SimpleITK as sitk
 
-from nninfe.infer_segmentation import process_single_image
+from nninfe.infer_segmentation import process_single_image, main
 from nninfe.segmentation.pipeline import (
     extract_plan_inference,
     flip_image_axes,
-    pad_volume_to_patch_size,
     run_sliding_window_segmentation,
 )
+
+import sys
+import json
+import pytest
+from unittest.mock import patch
 
 
 def _make_nifti(tmp_path, shape=(8, 8, 8), name="seg.nii.gz"):
@@ -163,33 +167,116 @@ def test_flip_image_axes_roundtrip():
     np.testing.assert_array_equal(restored_arr, arr)
     assert restored.GetSpacing() == img.GetSpacing()
 
+class TestSegmentationMain:
+    @patch("nninfe.infer_segmentation.create_session")
+    @patch("nninfe.infer_segmentation.process_single_image")
+    @patch("sys.argv", new_callable=list)
+    def test_main_single_image(self, mock_argv, mock_process, mock_create, tmp_path):
+        model_path = tmp_path / "model.onnx"
+        model_path.write_text("")
+        
+        plan_path = tmp_path / "plans.json"
+        plans = {
+            "foreground_intensity_properties_per_channel": {
+                "0": {
+                    "percentile_00_5": 0.0,
+                    "percentile_99_5": 100.0,
+                    "mean": 50.0,
+                    "std": 10.0
+                }
+            },
+            "configurations": {
+                "3d_fullres": {
+                    "patch_size": [128, 128, 128],
+                    "spacing": [1.0, 1.0, 1.0],
+                    "normalization_schemes": ["ZScoreNormalization"]
+                }
+            }
+        }
+        plan_path.write_text(json.dumps(plans))
+        
+        image_path = tmp_path / "image.nii.gz"
+        image_path.write_text("")
+        
+        output_dir = tmp_path / "output"
+        
+        mock_argv[:] = [
+            "nninfe-seg",
+            "--model-path", str(model_path),
+            "--plan-path", str(plan_path),
+            "--image-path", str(image_path),
+            "--output-dir", str(output_dir),
+            "--overlap", "0.5",
+            "--pad-value", "min"
+        ]
+        
+        mock_session = MagicMock()
+        mock_session.get_inputs.return_value = [MagicMock(shape=[1, 1, 128, 128, 128])]
+        mock_create.return_value = mock_session
+        mock_process.return_value = str(output_dir / "image_seg.nii.gz")
+        
+        main()
+        
+        mock_create.assert_called_once_with(str(model_path), backend="cpu", trt_fp16=False)
+        mock_process.assert_called_once()
+        kwargs = mock_process.call_args.kwargs
+        assert kwargs["session"] == mock_session
+        assert kwargs["image_path"] == str(image_path)
+        assert kwargs["output_dir"] == output_dir
+        assert kwargs["overlap"] == 0.5
+        assert kwargs["pad_value"] == "min"
 
-def test_pad_volume_to_patch_size_uses_min_minus_one():
-    volume = np.array(
-        [
-            [[3.0, 4.0], [5.0, 6.0]],
-            [[7.0, 8.0], [9.0, 10.0]],
-        ],
-        dtype=np.float32,
-    )
+    @patch("nninfe.infer_segmentation.create_session")
+    @patch("sys.argv", new_callable=list)
+    def test_main_build_engine_only(self, mock_argv, mock_create, tmp_path):
+        model_path = tmp_path / "model.onnx"
+        model_path.write_text("")
+        
+        plan_path = tmp_path / "plans.json"
+        plans = {
+            "foreground_intensity_properties_per_channel": {
+                "0": {
+                    "percentile_00_5": 0.0,
+                    "percentile_99_5": 100.0,
+                    "mean": 50.0,
+                    "std": 10.0
+                }
+            },
+            "configurations": {
+                "3d_fullres": {
+                    "patch_size": [64, 64, 64],
+                    "spacing": [1.0, 1.0, 1.0],
+                    "normalization_schemes": ["ZScoreNormalization"]
+                }
+            }
+        }
+        plan_path.write_text(json.dumps(plans))
+        
+        mock_argv[:] = [
+            "nninfe-seg",
+            "--model-path", str(model_path),
+            "--plan-path", str(plan_path),
+            "--backend", "trt",
+            "--trt-fp16",
+            "--build-engine-only"
+        ]
+        
+        mock_session = MagicMock()
+        mock_session.get_inputs.return_value = [MagicMock(shape=[1, 1, "batch", 64, 64])]
+        mock_create.return_value = mock_session
+        
+        main()
+        
+        mock_create.assert_called_once_with(str(model_path), backend="trt", trt_fp16=True)
 
-    padded, original_shape = pad_volume_to_patch_size(volume, patch_size_zyx=(3, 3, 3), pad_value="min")
+    @patch("sys.argv", new_callable=list)
+    def test_main_missing_model_exits(self, mock_argv, tmp_path):
+        mock_argv[:] = [
+            "nninfe-seg",
+            "--model-path", str(tmp_path / "missing.onnx"),
+            "--plan-path", "dummy.json"
+        ]
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert "not found" in str(exc.value)
 
-    assert original_shape == (2, 2, 2)
-    assert padded.shape == (3, 3, 3)
-    assert padded[2, 2, 2] == np.float32(2.0)
-
-def test_pad_volume_to_patch_size_default():
-    volume = np.array(
-        [
-            [[3.0, 4.0], [5.0, 6.0]],
-            [[7.0, 8.0], [9.0, 10.0]],
-        ],
-        dtype=np.float32,
-    )
-
-    padded, original_shape = pad_volume_to_patch_size(volume, patch_size_zyx=(3, 3, 3))
-
-    assert original_shape == (2, 2, 2)
-    assert padded.shape == (3, 3, 3)
-    assert padded[2, 2, 2] == np.float32(0.0)
