@@ -30,12 +30,15 @@ COPY nninfe/ nninfe/
 # Install the package itself
 RUN pip install .
 
-# Install ONNX Runtime GPU 
-RUN pip install onnxruntime-gpu --index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-11/pypi/simple/
+# Install ONNX Runtime GPU (CUDA 12 build — must match the cuda:12.2 base + cu12 libs below)
+RUN pip install onnxruntime-gpu --index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/
+
+# Install cuDNN 9 — onnxruntime-gpu >= 1.19 (CUDA 12) links libcudnn.so.9, but the base image only ships cuDNN 8
+RUN pip install nvidia-cudnn-cu12
 
 # Setup LD_LIBRARY_PATH dynamically so it finds the python packages
 RUN SITE="$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')" && \
-    echo "export LD_LIBRARY_PATH=\"$SITE/tensorrt_libs:$SITE/nvidia/cuda_runtime/lib:$SITE/nvidia/cublas/lib:\$LD_LIBRARY_PATH\"" > /etc/profile.d/trt_env.sh
+    echo "export LD_LIBRARY_PATH=\"$SITE/tensorrt_libs:$SITE/nvidia/cuda_runtime/lib:$SITE/nvidia/cublas/lib:$SITE/nvidia/cudnn/lib:\$LD_LIBRARY_PATH\"" > /etc/profile.d/trt_env.sh
 
 ENV BASH_ENV=/etc/profile.d/trt_env.sh
 
