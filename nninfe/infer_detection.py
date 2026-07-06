@@ -182,7 +182,7 @@ def main() -> None:
             image_name = image_name[:-7]
         elif image_name.endswith(".nii"):
             image_name = image_name[:-4]
-            
+
         if len(image_paths) > 1:
             print(f"\n{'='*60}", flush=True)
             print(f"  Image {img_idx + 1}/{len(image_paths)}: {img_path.name}", flush=True)
@@ -343,7 +343,7 @@ def process_single_image(
 
     if "scores_original" in merged:
         merged["scores"] = merged.pop("scores_original")
-        
+
     merged = clip_boxes_to_image_shape(merged, original_shape)
 
     t0 = time.time()

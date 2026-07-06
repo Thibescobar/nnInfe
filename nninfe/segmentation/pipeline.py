@@ -3,7 +3,7 @@
 import math
 import time
 from pathlib import Path
-from typing import List, Optional, Tuple, Union
+from typing import List, Tuple
 
 import numpy as np
 import SimpleITK as sitk

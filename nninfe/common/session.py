@@ -1,6 +1,9 @@
 """ONNX Runtime session helpers."""
 
+import ctypes
 import os
+import sys
+import sysconfig
 from pathlib import Path
 from typing import Dict, List
 
@@ -14,6 +17,56 @@ BACKENDS = {
     "trt": ["TensorrtExecutionProvider", "CUDAExecutionProvider", "CPUExecutionProvider"],
 }
 
+_gpu_libraries_preloaded = set()
+
+
+def _preload_gpu_libraries(backend: str) -> None:
+    """Make the pip-installed CUDA/cuDNN/TensorRT libraries discoverable in-process,
+    on both Windows and Linux — no LD_LIBRARY_PATH or conda activation script needed.
+
+    CUDA 12 + cuDNN 9 are loaded through ONNX Runtime's own cross-platform
+    ``preload_dlls()`` (ORT >= 1.21). TensorRT is not covered by it, so ``tensorrt_libs``
+    is placed on the native loader search path: prepended to PATH on Windows; on Linux
+    the core TensorRT libraries are preloaded and locate their arch-specific
+    builder-resource siblings via the wheel's RUNPATH (``$ORIGIN``). No-op for the
+    ``cpu``/``openvino`` backends and when the GPU wheels are absent (e.g. a CPU-only
+    install). Idempotent per stage.
+    """
+    if backend not in ("cuda", "trt"):
+        return
+
+    # CUDA 12 + cuDNN 9 — ONNX Runtime's official cross-platform preloader.
+    if "cuda_cudnn" not in _gpu_libraries_preloaded:
+        _gpu_libraries_preloaded.add("cuda_cudnn")
+        if hasattr(ort, "preload_dlls"):
+            try:
+                ort.preload_dlls()
+            except Exception:
+                pass
+
+    if backend != "trt" or "tensorrt" in _gpu_libraries_preloaded:
+        return
+    _gpu_libraries_preloaded.add("tensorrt")
+
+    trt_dir = Path(sysconfig.get_paths()["purelib"]) / "tensorrt_libs"
+    if not trt_dir.is_dir():
+        return
+    if sys.platform == "win32":
+        # ORT resolves its TensorRT provider's dependencies (nvinfer_*.dll) via PATH, and
+        # TensorRT loads the arch-specific builder-resource DLL lazily by name, so the dir
+        # must be on the search path here — preloading the libraries alone is not enough.
+        os.add_dll_directory(str(trt_dir))
+        os.environ["PATH"] = str(trt_dir) + os.pathsep + os.environ.get("PATH", "")
+    else:
+        # Preload the core libraries (nvinfer core first: plugin/parser depend on it). Their
+        # arch-specific builder-resource siblings are then resolved via the wheel's RUNPATH.
+        for stem in ("libnvinfer.so", "libnvinfer_plugin.so", "libnvonnxparser.so"):
+            for lib in sorted(trt_dir.glob(stem + ".*")):
+                try:
+                    ctypes.CDLL(str(lib))
+                except OSError:
+                    pass
+
 
 def create_session(
     model_path: str,
@@ -21,6 +74,7 @@ def create_session(
     trt_fp16: bool = False,
 ) -> ort.InferenceSession:
     """Create an ONNX Runtime session with the appropriate providers."""
+    _preload_gpu_libraries(backend)
     providers = BACKENDS[backend]
     opts = ort.SessionOptions()
     opts.log_severity_level = 3

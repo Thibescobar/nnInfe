@@ -1,6 +1,8 @@
+
 import pytest
-from pathlib import Path
+
 from nninfe.common.cli import collect_nifti_inputs
+
 
 def test_collect_both_args_exits():
     with pytest.raises(SystemExit) as exc:

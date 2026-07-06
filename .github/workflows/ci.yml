@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.9", "3.11"]
+        python-version: ["3.10", "3.11"]
 
     steps:
       - uses: actions/checkout@v4
@@ -27,7 +27,7 @@ jobs:
           pip install -e ".[cpu,dev]"
 
       - name: Lint with ruff
-        run: ruff check nndet_onnx/ tests/
+        run: ruff check nninfe/ tests/
 
       - name: Run tests
         run: python -m pytest tests/ -v

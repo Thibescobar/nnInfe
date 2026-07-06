@@ -1,10 +1,10 @@
 # ONNX Inference Pipeline for nnDetection & nnUNet
 
-![Python](https://img.shields.io/badge/python-≥3.9-blue)
+![Python](https://img.shields.io/badge/python-≥3.10-blue)
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
 ![CI](https://img.shields.io/badge/CI-GitHub%20Actions-blue)
 ![Tests](https://img.shields.io/badge/tests-120%20passed-brightgreen)
-![Coverage](https://img.shields.io/badge/coverage-95%25-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-93%25-brightgreen)
 ![Linting](https://img.shields.io/badge/linting-ruff-purple)
 
 Standalone ONNX inference pipeline for **nnDetection** (3D medical object detection) and **nnUNet** (3D medical image segmentation).
@@ -65,7 +65,7 @@ nninfe/
 ├── README.md                          # This file
 ├── .github/
 │   └── workflows/
-│       └── ci.yml                     # GitHub Actions CI (lint + test, Python 3.9 & 3.11)
+│       └── ci.yml                     # GitHub Actions CI (lint + test, Python 3.10 & 3.11)
 ├── nninfe/
 │   ├── __init__.py
 │   ├── infer_detection.py     # Detection CLI
@@ -105,7 +105,7 @@ Optional / auto-generated:
 
 ## Requirements
 
-- Python ≥ 3.9
+- Python ≥ 3.10
 - numpy
 - SimpleITK
 - onnxruntime (variant depends on backend, see [Installation](#installation))
@@ -123,71 +123,39 @@ Optional (for `--nms-backend nndet`):
 | Backend | Windows | Linux |
 |---------|---------|-------|
 | `cpu` | ✅ | ✅ |
-| `openvino` | ❌ | ✅ |
-| `cuda` | ❌ | ✅ |
-| `trt` | ❌ | ✅ |
+| `openvino` |  | ✅ |
+| `cuda` | ✅ | ✅ |
+| `trt` | ✅ | ✅ |
 
 > **Important:** `onnxruntime`, `onnxruntime-gpu`, and `onnxruntime-openvino` are **mutually exclusive** pip packages and they all install to the same `onnxruntime` namespace. Installing one silently overwrites the other.
 
-> **Support on Windows:** It has been tested for the CPU backend for development convenience, and the installation steps apply only to green-checkmarked configurations. However, small efforts to the installation and configuration would be enough to enable all backends on Windows and even other operating systems easily.
+> **Support on Windows:** Only `openvino` remains untested on Windows.
 
-### CPU environment (all platforms)
+### Base setup
 
-```bash
-conda create -n nnInfe python=3.9
-conda activate nnInfe
-pip install -e ".[cpu]"
-```
-
-### OpenVINO environment (Linux only)
+Each backend lives in its own conda environment, and they all follow the same three steps — create the env, activate it, install the package. Only the pip extra differs:
 
 ```bash
-conda create -n nnInfe-ov python=3.9
-conda activate nnInfe-ov
-pip install -e ".[openvino]"
+conda create -n <env-name> python=3.10
+conda activate <env-name>
+pip install -e "<extra>"
 ```
 
-Supports backends: `cpu`, `openvino`.
+| Environment | Backends | `<extra>` |
+|-------------|----------|-----------|
+| `nnInfe` (all platforms) | `cpu` | `.[cpu]` |
+| `nnInfe-ov` (Linux) | `cpu`, `openvino` | `.[openvino]` |
+| `nnInfe-trt` (Linux & Windows) | `cpu`, `cuda`, `trt` | `.[gpu]` |
 
-### GPU environment (Linux only)
 
-```bash
-conda create -n nnInfe-trt python=3.9
-conda activate nnInfe-trt
-pip install -e .
-pip install onnxruntime-gpu \
-  --index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-11/pypi/simple/
-conda install cudnn=8
-pip install tensorrt==10.3.0 tensorrt-cu12_bindings==10.3.0 tensorrt-cu12_libs==10.3.0
-pip install nvidia-cuda-runtime-cu12==12.2.140 nvidia-cublas-cu12==12.2.5.6
-```
+> **GPU automatic linkage:** The `.[gpu]` extra (installed by the base setup above) is the **unified CUDA 12 stack** used identically on Linux and Windows: `onnxruntime-gpu`, the CUDA 12 / cuDNN 9 runtime wheels, and a compatible `tensorrt-cu12` (pinned `<11` — rationale in [pyproject.toml](pyproject.toml)). No `LD_LIBRARY_PATH` and no conda activation script are needed: `create_session()` makes these libraries discoverable in-process at runtime (see `_preload_gpu_libraries` in `nninfe/common/session.py`) by calling ONNX Runtime's cross-platform `preload_dlls()` for CUDA + cuDNN and placing `tensorrt_libs` on the native loader search path (prepended to `PATH` on Windows, preloaded with RUNPATH resolution on Linux). Both the `cuda` and `trt` backends have been verified on Linux and Windows. Check the `ONNX Runtime providers` line printed at session creation.
 
-> `onnxruntime-gpu` is installed manually because the CUDA version depends on your driver. Always install it **after** `pip install -e .`.
+> **GPU Linux fallback (rarely needed):** on a hardened or non-standard loader configuration where the wheel's RUNPATH is ignored, the arch-specific `libnvinfer_builder_resource_*.so` may not be found and the TensorRT execution provider falls back to CPU. If that happens, add the wheel's `tensorrt_libs` to `LD_LIBRARY_PATH`:
+> ```bash
+> export LD_LIBRARY_PATH="$(python -c 'import os,sysconfig;print(os.path.join(sysconfig.get_paths()["purelib"],"tensorrt_libs"))'):$LD_LIBRARY_PATH"
+> ```
 
-Then configure `LD_LIBRARY_PATH` (create once):
-
-```bash
-CONDA_PREFIX=$CONDA_PREFIX
-mkdir -p "$CONDA_PREFIX/etc/conda/activate.d"
-cat > "$CONDA_PREFIX/etc/conda/activate.d/env_vars.sh" << 'EOF'
-#!/bin/bash
-SITE="$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
-export LD_LIBRARY_PATH="$SITE/tensorrt_libs:$SITE/nvidia/cuda_runtime/lib:$SITE/nvidia/cublas/lib:$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
-EOF
-```
-
-Supports backends: `cpu`, `cuda`, `trt`.
-
-### Validated GPU Configuration
-
-| Component | Version |
-|-----------|---------|
-| OS | Ubuntu 22.04 |
-| GPU | NVIDIA RTX 3070 (8 GB, sm86) |
-| Driver | 535.309 |
-| CUDA toolkit (system) | 11.7 |
-| TensorRT | 10.3 |
-| Python | 3.9 |
+> **Why Python ≥ 3.10?** The GPU backends use the CUDA 12 wheels, which require `onnxruntime-gpu` ≥ 1.20 — and ONNX Runtime **dropped Python 3.9 at v1.20** (3.9 caps at ORT 1.19.2). The project therefore requires Python ≥ 3.10 (`requires-python = ">=3.10"`). `--nms-backend nndet` could need some extra work to be installed with Python > 3.9.
 
 > **Tip:** If you want a single unified environment with all backends, you can [build ONNX Runtime from source](https://onnxruntime.ai/docs/build/) with multiple execution providers enabled (e.g. `--use_cuda --use_tensorrt --use_openvino`).
 
@@ -567,8 +535,8 @@ pip install -e ".[cpu,dev]"
 # OpenVINO (Linux only)
 pip install -e ".[openvino,dev]"
 
-# GPU (Linux only — see GPU environment above for onnxruntime-gpu setup)
-pip install -e ".[dev]"
+# GPU / cuda + trt (Linux & Windows)
+pip install -e ".[gpu,dev]"
 ```
 
 ```bash
