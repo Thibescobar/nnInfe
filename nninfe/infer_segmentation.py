@@ -214,7 +214,7 @@ def main() -> None:
             image_name = image_name[:-7]
         elif image_name.endswith(".nii"):
             image_name = image_name[:-4]
-            
+
         if len(image_paths) > 1:
             print(f"\n{'='*60}", flush=True)
             print(f"  Image {idx + 1}/{len(image_paths)}: {image_path.name}", flush=True)
