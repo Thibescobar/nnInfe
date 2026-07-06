@@ -1,5 +1,9 @@
-# ---- builder: install the package + the unified CUDA 12 GPU stack ----
+# ---- builder: install + aggressively slim the CUDA 12 GPU stack ----
 FROM python:3.10-slim AS builder
+
+# binutils provides `strip` (build-stage only; never reaches the runtime image).
+RUN apt-get update && apt-get install -y --no-install-recommends binutils \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 ENV PIP_NO_CACHE_DIR=1
@@ -10,25 +14,46 @@ COPY nninfe/ nninfe/
 # `gpu` extra = onnxruntime-gpu + CUDA 12 / cuDNN 9 wheels + tensorrt-cu12<11 (same as bare metal).
 RUN pip install ".[gpu]"
 
-# Drop TensorRT's Windows cross-build builder resources (~3 GB): a Linux image builds and
-# runs its engines on Linux and never targets Windows, so these are dead weight. The Linux
-# per-arch resources are kept, so the image still works on any NVIDIA GPU.
-RUN rm -f /usr/local/lib/python3.10/site-packages/tensorrt_libs/libnvinfer_builder_resource_win_*
+# Slim the install (this is what keeps the image small — see the "Docker images" section in the README):
+#  - TensorRT builder resources: keep ONLY the PTX/JIT resource; drop every per-arch (sm*)
+#    and Windows (win_*) resource. TensorRT JIT-compiles the engine from PTX for whatever
+#    GPU it runs on, so the image stays portable across NVIDIA archs. This removes ~5 GB.
+#  - Strip debug symbols; drop headers, static libs, bytecode and type stubs (runtime-useless).
+RUN set -eux; \
+    SP="$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"; \
+    rm -f "$SP"/tensorrt_libs/libnvinfer_builder_resource_sm* \
+          "$SP"/tensorrt_libs/libnvinfer_builder_resource_win_*; \
+    find "$SP" -name '*.so*' -type f -exec strip --strip-unneeded {} + 2>/dev/null || true; \
+    find "$SP" -type d -name include -exec rm -rf {} + 2>/dev/null || true; \
+    find "$SP" -name '*.a' -delete; \
+    find "$SP" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true; \
+    find "$SP" \( -name '*.pyc' -o -name '*.pyi' \) -delete
 
-# ---- runtime: copy only the installed packages into a clean slim image ----
+# Optional further ~0.8 GB (opt-in, OFF by default): drop cuDNN's precompiled + advanced
+# kernels. In the TensorRT path convolutions run *inside* TensorRT, so cuDNN is unused —
+# but the `cuda` backend routes convs through the CUDA EP and DOES need them. Enable ONLY
+# for TensorRT-only deployments, after validating with your model:
+#   docker build --build-arg SLIM_CUDNN=1 -f Dockerfile.trt -t nninfe-trt .
+ARG SLIM_CUDNN=0
+RUN if [ "$SLIM_CUDNN" = "1" ]; then \
+      SP="$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"; \
+      rm -f "$SP"/nvidia/cudnn/lib/libcudnn_engines_precompiled.so.9 \
+            "$SP"/nvidia/cudnn/lib/libcudnn_adv.so.9; \
+    fi
+
+# ---- runtime: copy only the slimmed packages into a clean image ----
 FROM python:3.10-slim
 
 # libgomp1 is needed by ONNX Runtime; the CUDA/cuDNN/TensorRT userspace libraries come from
 # the copied wheels below (the NVIDIA driver's libcuda is injected at `docker run --gpus all`
 # by the NVIDIA Container Toolkit).
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgomp1 \
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
 COPY --from=builder /usr/local/bin/nninfe-det /usr/local/bin/nninfe-seg /usr/local/bin/
 
 # create_session() preloads the CUDA/cuDNN/TensorRT libraries in-process (ORT's preload_dlls()
-# for CUDA + cuDNN, and RUNPATH resolution for TensorRT's arch-specific builder-resource libs),
-# so no LD_LIBRARY_PATH or activation script is required — verified via `docker run --gpus all`.
+# for CUDA + cuDNN, and RUNPATH resolution for TensorRT's PTX builder resource), so no
+# LD_LIBRARY_PATH or activation script is required — verified via `docker run --gpus all`.
 CMD ["nninfe-det", "--help"]

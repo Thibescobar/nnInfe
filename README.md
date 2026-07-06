@@ -159,6 +159,28 @@ pip install -e "<extra>"
 
 > **Tip:** If you want a single unified environment with all backends, you can [build ONNX Runtime from source](https://onnxruntime.ai/docs/build/) with multiple execution providers enabled (e.g. `--use_cuda --use_tensorrt --use_openvino`).
 
+### Docker images
+
+Three `python:3.10-slim`-based Dockerfiles build backend-specific images:
+
+| File | Backends | Install |
+|------|----------|---------|
+| `Dockerfile` | `cpu` | `.[cpu]` |
+| `Dockerfile.ov` | `cpu`, `openvino` | `.[openvino]` |
+| `Dockerfile.trt` | `cpu`, `cuda`, `trt` | `.[gpu]`, multi-stage + slimmed |
+
+Example:
+```bash
+docker build -f Dockerfile.trt -t nninfe-trt .
+docker run --rm --gpus all nninfe-trt nninfe-det --backend trt --trt-fp16 \
+  --model-path /data/model_onnx_shaped.onnx --plan-path /data/plan_inference.json \
+  --image-path /data/img.nii.gz --output-dir /data/out
+```
+
+**GPU image size.** `Dockerfile.trt` keeps the current versions (onnxruntime-gpu 1.23.x, TensorRT 10.16) but is slimmed in a multi-stage build: it keeps only TensorRT's **PTX/JIT builder resource** — dropping the per-arch `sm*` and Windows `win_*` resources (TensorRT JIT-compiles the engine for whatever GPU it runs on) — then strips debug symbols and drops headers, static libs and bytecode. Result: **~8 GB** (from ~17 GB unslimmed), still portable across NVIDIA architectures, with both `cuda` and `trt` working.
+
+> **Opt-in `--build-arg SLIM_CUDNN=1` (→ ~6.5 GB).** Additionally drops cuDNN's precompiled + advanced kernels. In the `trt` path convolutions run *inside* TensorRT, so cuDNN is unused — **but** the `cuda` backend routes convolutions through cuDNN and would break on a conv model. Use it **only** for TensorRT-only deployments, and validate with your own model first.
+
 ---
 
 ## Quick Start
