@@ -206,7 +206,7 @@ nninfe-det \
   --backend trt --trt-fp16
 ```
 
-Batch mode (all NIfTI in a directory):
+Batch mode (each entry in the directory is one image — a NIfTI file or a DICOM series folder):
 
 ```bash
 nninfe-det \
@@ -261,8 +261,8 @@ nninfe-seg \
 
 | Argument | Description |
 |----------|-------------|
-| `--image-path` | Path to a single NIfTI image (`.nii` or `.nii.gz`). |
-| `--image-dir` | Path to a directory of NIfTI images (batch mode). |
+| `--image-path` | A single input image: a NIfTI file (`.nii`/`.nii.gz`) or a DICOM series directory. |
+| `--image-dir` | Batch mode: a directory where **each entry is one image** — a NIfTI file or a DICOM series subdirectory (NIfTI and DICOM may be mixed). |
 
 ### Output
 
@@ -539,7 +539,7 @@ All backends produce **26 detections** — results are consistent across backend
 ## Limitations & Known Issues
 
 - **Multiple classes for detection**: Detection currently exposes class output natively mapped (label 0, etc). Multi-class might require specific per-class NMS tracking in nnDetection pipelines if custom configuration differs.
-- **No DICOM handling**: Input must be NIfTI (`.nii` or `.nii.gz`). DICOM→NIfTI conversion should be done upstream. Patched soon.
+- **DICOM output not yet supported**: DICOM **input** is supported — a series directory is read directly (see [CLI Reference](#cli-reference)). Results are still written as NIfTI and JSON. DICOM output is planned.
 - **Mask is bounding-box based for detection**: While the native nnDetection framework give the possibility to output segmentation contours for some detected objects (not all), the output mask for the present detection pipeline (`_mask.nii.gz`) fills bounding boxes. Pixel-level contours is reserved for the segmentation pipeline for the moment. Could be patched if there are needs.
 - **Single fold**: Uses one fold only. Multi-fold ensemble was intentionally deferred for industrialization simplicity and speed across both detection and segmentation.
 - **Structured logging**: Currently all output is `print()`. Production should use Python `logging` with levels (DEBUG/INFO/WARNING).
