@@ -64,7 +64,7 @@ def process_single_image(
 
     print("[1/3] Preprocessing image …", flush=True)
     t0 = time.time()
-    preprocessed = preprocess_image(image_path, plan_inference)
+    preprocessed, orig_meta = preprocess_image(image_path, plan_inference)
     preprocessed_for_infer = flip_image_axes(preprocessed, True, True, False)
     volume = sitk.GetArrayFromImage(preprocessed_for_infer)
     print(f"      preprocessing done  ({time.time() - t0:.2f}s)", flush=True)
@@ -103,7 +103,7 @@ def process_single_image(
     export_segmentation_mask(
         labels_zyx=labels,
         preprocessed_image=preprocessed,
-        reference_image_path=image_path,
+        reference=orig_meta,
         output_path=out_mask,
         resample_mask_to_reference=resample_mask_to_reference,
     )
