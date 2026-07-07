@@ -201,13 +201,17 @@ def run_sliding_window_segmentation(
 def export_segmentation_mask(
     labels_zyx: np.ndarray,
     preprocessed_image: sitk.Image,
-    reference_image_path: str,
+    reference,
     output_path: str,
     resample_mask_to_reference,
 ) -> None:
-    """Export segmentation mask as NIfTI in original image geometry."""
+    """Export segmentation mask as NIfTI in the original image geometry.
+
+    ``reference`` is a path or an already-read geometry dict (see
+    :func:`nninfe.common.preprocessing.resample_mask_to_reference`).
+    """
     mask = sitk.GetImageFromArray(labels_zyx)
     mask.CopyInformation(preprocessed_image)
-    mask_ref = resample_mask_to_reference(mask, reference_image_path)
+    mask_ref = resample_mask_to_reference(mask, reference)
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     sitk.WriteImage(mask_ref, output_path)

@@ -10,6 +10,7 @@ from nninfe.common.preprocessing import (
     pad_volume_to_patch_size,
     preprocess_image,
     resample_image,
+    resample_mask_to_reference,
 )
 
 
@@ -113,8 +114,10 @@ class TestPreprocessImage:
                 "std": 200.0,
             },
         }
-        result = preprocess_image(nifti_path, plan, verbose=False)
+        result, orig_meta = preprocess_image(nifti_path, plan, verbose=False)
         result_arr = sitk.GetArrayFromImage(result)
+        # Original geometry is returned for lossless mapping back to the input frame.
+        assert orig_meta["size_xyz"] == (16, 16, 16)
 
         # After clipping to [50, 950] and normalizing with mean=500, std=200
         assert result_arr.shape == (16, 16, 16)
@@ -173,3 +176,17 @@ def test_pad_volume_to_patch_size_default():
     assert original_shape == (2, 2, 2)
     assert padded.shape == (3, 3, 3)
     assert padded[2, 2, 2] == np.float32(0.0)
+
+
+def test_resample_mask_to_reference_accepts_geometry_dict():
+    # Passing an already-read geometry dict (no path) avoids re-reading the input.
+    mask = sitk.GetImageFromArray(np.ones((4, 4, 4), dtype=np.uint8))
+    ref_meta = {
+        "size_xyz": (8, 8, 8),
+        "spacing_xyz": (2.0, 2.0, 2.0),
+        "origin": (0.0, 0.0, 0.0),
+        "direction": (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0),
+    }
+    out = resample_mask_to_reference(mask, ref_meta)
+    assert out.GetSize() == (8, 8, 8)
+    assert out.GetSpacing() == pytest.approx((2.0, 2.0, 2.0))

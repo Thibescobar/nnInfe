@@ -13,7 +13,6 @@ import numpy as np
 import SimpleITK as sitk
 
 from nninfe.common.cli import collect_image_inputs
-from nninfe.common.io import read_image_metadata
 from nninfe.common.preprocessing import pad_volume_to_patch_size, preprocess_image, resample_mask_to_reference
 from nninfe.common.session import BACKENDS, create_session, parse_outputs, run_inference
 from nninfe.common.sliding_window import compute_patch_positions, extract_patch
@@ -242,7 +241,7 @@ def process_single_image(
 
     print("[2/5] Preprocessing image ...", flush=True)
     t0 = time.time()
-    preprocessed = preprocess_image(image_path, plan_inference)
+    preprocessed, orig_meta = preprocess_image(image_path, plan_inference)
     volume = sitk.GetArrayFromImage(preprocessed)
     spacing_xyz = preprocessed.GetSpacing()
     print(f"      preprocessing done  ({time.time() - t0:.2f}s)", flush=True)
@@ -351,13 +350,12 @@ def process_single_image(
 
     mask_path = str(output_dir / f"{image_name}_mask.nii.gz")
     cc = detections_to_mask(merged, original_shape, preprocessed)
-    cc = resample_mask_to_reference(cc, image_path)
+    cc = resample_mask_to_reference(cc, orig_meta)
     sitk.WriteImage(cc, mask_path)
     print(f"      mask  -> {mask_path}", flush=True)
 
     json_path = str(output_dir / f"{image_name}_boxes.json")
 
-    orig_meta = read_image_metadata(image_path)
     resampled_meta = {
         "size_xyz": preprocessed.GetSize(),
         "spacing_xyz": preprocessed.GetSpacing(),
