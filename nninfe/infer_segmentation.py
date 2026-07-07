@@ -9,9 +9,8 @@ from pathlib import Path
 
 import SimpleITK as sitk
 
-from nninfe.common.cli import collect_nifti_inputs
-from nninfe.common.io import resample_mask_to_reference
-from nninfe.common.preprocessing import pad_volume_to_patch_size, preprocess_image
+from nninfe.common.cli import collect_image_inputs
+from nninfe.common.preprocessing import pad_volume_to_patch_size, preprocess_image, resample_mask_to_reference
 from nninfe.common.session import BACKENDS, create_session
 from nninfe.segmentation.pipeline import (
     crop_volume_to_shape,
@@ -124,8 +123,8 @@ def main() -> None:
     parser.add_argument("--model-path", required=True, help="Path to ONNX model")
     parser.add_argument("--plan-path", required=True, help="Path to nnUNet plans.json")
     parser.add_argument("--configuration", default="3d_fullres", help="nnUNet plan configuration name")
-    parser.add_argument("--image-path", help="Path to a single input NIfTI image")
-    parser.add_argument("--image-dir", help="Path to a directory of NIfTI images")
+    parser.add_argument("--image-path", help="Single input image: a NIfTI file (.nii/.nii.gz) or a DICOM series directory")
+    parser.add_argument("--image-dir", help="Batch mode: a directory where each entry is one image (a NIfTI file or a DICOM series subdirectory)")
     parser.add_argument("--output-dir", help="Output directory for segmentation masks")
     parser.add_argument("--overlap", type=float, default=0.5, help="Sliding-window overlap in [0,1)")
     parser.add_argument(
@@ -198,7 +197,7 @@ def main() -> None:
         print("Engine/session initialized. Exiting.", flush=True)
         return
 
-    image_paths = collect_nifti_inputs(args.image_path, args.image_dir)
+    image_paths = collect_image_inputs(args.image_path, args.image_dir)
     output_dir = Path(args.output_dir)
     os.makedirs(output_dir, exist_ok=True)
 

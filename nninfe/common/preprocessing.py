@@ -5,6 +5,8 @@ from typing import List, Optional, Tuple, Union
 import numpy as np
 import SimpleITK as sitk
 
+from nninfe.common.io import read_image, read_image_metadata
+
 
 def pad_volume_to_patch_size(
     volume_zyx: np.ndarray,
@@ -67,6 +69,25 @@ def resample_image(
     return resampler.Execute(image)
 
 
+def resample_mask_to_reference(mask: sitk.Image, reference_path: str) -> sitk.Image:
+    """Resample a label mask back to the geometry of a reference image (NIfTI or DICOM).
+
+    Inverse of :func:`resample_image`: maps a model-space result into the original input's
+    voxel frame so it overlays the source. Nearest-neighbor (label-preserving). The
+    reference geometry is read via :func:`nninfe.common.io.read_image_metadata`.
+    """
+    meta = read_image_metadata(reference_path)
+    resampler = sitk.ResampleImageFilter()
+    resampler.SetOutputSpacing(meta["spacing_xyz"])
+    resampler.SetSize(meta["size_xyz"])
+    resampler.SetOutputDirection(meta["direction"])
+    resampler.SetOutputOrigin(meta["origin"])
+    resampler.SetInterpolator(sitk.sitkNearestNeighbor)
+    resampler.SetDefaultPixelValue(0)
+    resampler.SetTransform(sitk.Transform())
+    return resampler.Execute(mask)
+
+
 def clip_image(image: sitk.Image, lower: float, upper: float) -> sitk.Image:
     """Clamp intensities to [lower, upper]."""
     clamper = sitk.ClampImageFilter()
@@ -88,8 +109,11 @@ def preprocess_image(
     plan_inference: dict,
     verbose: bool = True,
 ) -> sitk.Image:
-    """Preprocessing chain (no crop): cast -> resample -> clip -> normalize."""
-    image = sitk.ReadImage(image_path)
+    """Preprocessing chain (no crop): cast -> resample -> clip -> normalize.
+
+    ``image_path`` may be a NIfTI file or a DICOM series directory (see ``read_image``).
+    """
+    image = read_image(image_path)
     image = sitk.Cast(image, sitk.sitkFloat32)
     if verbose:
         _sf = sitk.StatisticsImageFilter()
