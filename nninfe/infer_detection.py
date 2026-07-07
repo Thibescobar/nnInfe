@@ -12,9 +12,8 @@ from typing import Dict, List
 import numpy as np
 import SimpleITK as sitk
 
-from nninfe.common.cli import collect_nifti_inputs
-from nninfe.common.io import read_image_metadata, resample_mask_to_reference
-from nninfe.common.preprocessing import pad_volume_to_patch_size, preprocess_image
+from nninfe.common.cli import collect_image_inputs
+from nninfe.common.preprocessing import pad_volume_to_patch_size, preprocess_image, resample_mask_to_reference
 from nninfe.common.session import BACKENDS, create_session, parse_outputs, run_inference
 from nninfe.common.sliding_window import compute_patch_positions, extract_patch
 from nninfe.detection.anchors import compute_anchors
@@ -41,8 +40,8 @@ def main() -> None:
 
     parser.add_argument("--model-path", required=True, help="Path to model_onnx.onnx")
     parser.add_argument("--plan-path", required=True, help="Path to plan_inference.json")
-    parser.add_argument("--image-path", help="Path to a single input NIfTI image")
-    parser.add_argument("--image-dir", help="Path to a directory of NIfTI images (batch mode)")
+    parser.add_argument("--image-path", help="Single input image: a NIfTI file (.nii/.nii.gz) or a DICOM series directory")
+    parser.add_argument("--image-dir", help="Batch mode: a directory where each entry is one image (a NIfTI file or a DICOM series subdirectory)")
     parser.add_argument("--output-dir", help="Output directory for results (mask, JSON, CSV)")
 
     parser.add_argument(
@@ -111,7 +110,7 @@ def main() -> None:
     if not args.build_engine_only:
         if not args.output_dir:
             sys.exit("Error: --output-dir is required for inference")
-        image_paths = collect_nifti_inputs(args.image_path, args.image_dir)
+        image_paths = collect_image_inputs(args.image_path, args.image_dir)
     else:
         image_paths = []
 
@@ -242,7 +241,7 @@ def process_single_image(
 
     print("[2/5] Preprocessing image ...", flush=True)
     t0 = time.time()
-    preprocessed = preprocess_image(image_path, plan_inference)
+    preprocessed, orig_meta = preprocess_image(image_path, plan_inference)
     volume = sitk.GetArrayFromImage(preprocessed)
     spacing_xyz = preprocessed.GetSpacing()
     print(f"      preprocessing done  ({time.time() - t0:.2f}s)", flush=True)
@@ -351,13 +350,12 @@ def process_single_image(
 
     mask_path = str(output_dir / f"{image_name}_mask.nii.gz")
     cc = detections_to_mask(merged, original_shape, preprocessed)
-    cc = resample_mask_to_reference(cc, image_path)
+    cc = resample_mask_to_reference(cc, orig_meta)
     sitk.WriteImage(cc, mask_path)
     print(f"      mask  -> {mask_path}", flush=True)
 
     json_path = str(output_dir / f"{image_name}_boxes.json")
 
-    orig_meta = read_image_metadata(image_path)
     resampled_meta = {
         "size_xyz": preprocessed.GetSize(),
         "spacing_xyz": preprocessed.GetSpacing(),
