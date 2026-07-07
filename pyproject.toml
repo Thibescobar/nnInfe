@@ -24,6 +24,8 @@ classifiers = [
 dependencies = [
     "numpy",
     "SimpleITK",
+    "pydicom",
+    "highdicom",
 ]
 
 [project.scripts]

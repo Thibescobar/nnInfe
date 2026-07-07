@@ -12,9 +12,9 @@ from typing import Dict, List
 import numpy as np
 import SimpleITK as sitk
 
-from nninfe.common.cli import collect_nifti_inputs
-from nninfe.common.io import read_image_metadata, resample_mask_to_reference
-from nninfe.common.preprocessing import pad_volume_to_patch_size, preprocess_image
+from nninfe.common.cli import collect_image_inputs
+from nninfe.common.io import read_image_metadata
+from nninfe.common.preprocessing import pad_volume_to_patch_size, preprocess_image, resample_mask_to_reference
 from nninfe.common.session import BACKENDS, create_session, parse_outputs, run_inference
 from nninfe.common.sliding_window import compute_patch_positions, extract_patch
 from nninfe.detection.anchors import compute_anchors
@@ -41,8 +41,8 @@ def main() -> None:
 
     parser.add_argument("--model-path", required=True, help="Path to model_onnx.onnx")
     parser.add_argument("--plan-path", required=True, help="Path to plan_inference.json")
-    parser.add_argument("--image-path", help="Path to a single input NIfTI image")
-    parser.add_argument("--image-dir", help="Path to a directory of NIfTI images (batch mode)")
+    parser.add_argument("--image-path", help="Single input image: a NIfTI file (.nii/.nii.gz) or a DICOM series directory")
+    parser.add_argument("--image-dir", help="Batch mode: a directory where each entry is one image (a NIfTI file or a DICOM series subdirectory)")
     parser.add_argument("--output-dir", help="Output directory for results (mask, JSON, CSV)")
 
     parser.add_argument(
@@ -111,7 +111,7 @@ def main() -> None:
     if not args.build_engine_only:
         if not args.output_dir:
             sys.exit("Error: --output-dir is required for inference")
-        image_paths = collect_nifti_inputs(args.image_path, args.image_dir)
+        image_paths = collect_image_inputs(args.image_path, args.image_dir)
     else:
         image_paths = []
 

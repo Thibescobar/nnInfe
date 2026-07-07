@@ -8,7 +8,8 @@ import numpy as np
 import pytest
 import SimpleITK as sitk
 
-from nninfe.common.io import read_image_metadata, resample_mask_to_reference
+from nninfe.common.io import read_image_metadata
+from nninfe.common.preprocessing import resample_mask_to_reference
 from nninfe.detection.export import (
     detections_to_mask,
     export_detections_csv,
