@@ -3,8 +3,8 @@
 ![Python](https://img.shields.io/badge/python-≥3.10-blue)
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
 ![CI](https://img.shields.io/badge/CI-GitHub%20Actions-blue)
-![Tests](https://img.shields.io/badge/tests-120%20passed-brightgreen)
-![Coverage](https://img.shields.io/badge/coverage-93%25-brightgreen)
+![Tests](https://img.shields.io/badge/tests-142%20passed-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-94%25-brightgreen)
 ![Linting](https://img.shields.io/badge/linting-ruff-purple)
 
 Standalone ONNX inference pipeline for **nnDetection** (3D medical object detection) and **nnUNet** (3D medical image segmentation).
@@ -39,7 +39,6 @@ Please also cite the original nnDetection, nnUNet, ONNX Runtime, and other upstr
 
 ## Table of Contents
 
-- [Project Structure](#project-structure)
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
@@ -52,54 +51,6 @@ Please also cite the original nnDetection, nnUNet, ONNX Runtime, and other upstr
 - [Preparation Tools](#preparation-tools)
 - [Benchmarks](#benchmarks)
 - [Limitations & Known Issues](#limitations--known-issues)
-
----
-
-## Project Structure
-
-```
-nninfe/
-├── .gitignore                         # Git ignore rules
-├── pyproject.toml                     # Package config, dependencies, ruff & pytest settings
-├── LICENSE                            # Apache 2.0
-├── README.md                          # This file
-├── .github/
-│   └── workflows/
-│       └── ci.yml                     # GitHub Actions CI (lint + test, Python 3.10 & 3.11)
-├── nninfe/
-│   ├── __init__.py
-│   ├── infer_detection.py     # Detection CLI
-│   ├── infer_segmentation.py    # Segmentation CLI
-│   ├── common/                        # Shared preprocessing, sliding-window, I/O, session
-│   ├── detection/                     # Detection-specific anchors, post-processing, export
-│   ├── segmentation/                  # Segmentation-specific plan, reconstruction
-│   ├── tools/
-│   │   ├── pkl_to_json.py       # Convert plan_inference.pkl → JSON (one-shot)
-│   │   └── onnx_shape_inference.py  # ONNX shape inference for TRT (one-shot)
-│   └── data/                          # ⚠ NOT TRACKED IN GIT — see below
-└── tests/
-    ├── test_anchors.py                # Detection anchor generation
-    ├── test_cli.py                    # Common CLI validation helpers
-    ├── test_export.py                 # Detection export and mask helpers
-    ├── test_export_scaling.py         # Detection coordinate scaling
-    ├── test_integration.py            # Detection end-to-end with mocked session
-    ├── test_postprocessing.py         # Detection post-processing
-    ├── test_preprocessing.py          # Shared preprocessing helpers
-    ├── test_segmentation.py           # Segmentation plan + reconstruction + export
-    ├── test_session.py                # Session creation and inference helpers
-    └── test_sliding_window.py         # Shared sliding-window logic
-```
-
-### `data/` folder (external, not versioned)
-
-All file paths are passed via CLI arguments (`--model-path`, `--plan-path`, `--image-path`, etc.), so **you can store your model and images anywhere on your system**. The `data/` folder inside `nninfe/` is simply a convenience location used during development and is excluded from the git repository.
-
-Required files to run inference:
-- An ONNX model file (`.onnx`) — passed via `--model-path`.
-- An inference config file (`.json`) — passed via `--plan-path` (e.g.`plan_inference.json` for detection, `plans.json` for segmentation).
-
-Optional / auto-generated:
-- `trt_engine_cache_fp16/` — TensorRT compiled engines, created automatically next to the model on first TRT run. Specific to GPU architecture (e.g. sm86 for RTX 3070), regenerated if missing.
 
 ---
 
@@ -296,11 +247,13 @@ nninfe-seg \
 | `--trt-fp16` | off | Enable FP16 inference for TensorRT. |
 | `--build-engine-only` | off | Build TRT engine cache and exit (no image/output needed). |
 
-### `nninfe-seg configuration` 
+### `nninfe-seg` options
 
 | Argument | Description |
 |----------|-------------|
 | `--configuration` | Plan configuration name (default: `3d_fullres`). |
+| `--output-format` | `nifti` (default), `dicom-seg` (DICOM SEG referencing the source series — requires DICOM input), or `both`. |
+| `--seg-encoding` | DICOM SEG representation: `binary` (default, widest viewer support) or `labelmap` (compact, size independent of class count — better for many-class masks, needs a newer viewer). |
 
 
 ## Pipeline Architecture
@@ -482,6 +435,10 @@ Resampled to the **original image geometry** (spacing, origin, direction, size) 
 
 A voxel-level label map where integer values represent semantic classes as defined in standard nnUNet exports. Re-sampled natively back to the input reference image's spacing and geometry.
 
+### Output: `{name}_seg.dcm` (Segmentation, `--output-format dicom-seg` / `both`)
+
+A DICOM Segmentation (SEG) object referencing the source series (shared Frame of Reference), with one segment per non-zero class (sparse label ids are remapped to contiguous segment numbers, the original id kept in the segment label). Requires DICOM **input**, since a SEG is spatially bound to the source instances. `--seg-encoding` selects `binary` (default — one binary plane per segment, widest viewer support, but file size grows with the class count) or `labelmap` (a single compact label map — size independent of class count, ideal for many-class masks, but requires a newer viewer/PACS). The `nninfe` version is recorded as the algorithm/software version for traceability. Overlays directly on the source study in any DICOM viewer / PACS.
+
 ---
 
 ## Inference Backends
@@ -539,7 +496,7 @@ All backends produce **26 detections** — results are consistent across backend
 ## Limitations & Known Issues
 
 - **Multiple classes for detection**: Detection currently exposes class output natively mapped (label 0, etc). Multi-class might require specific per-class NMS tracking in nnDetection pipelines if custom configuration differs.
-- **DICOM output not yet supported**: DICOM **input** is supported — a series directory is read directly (see [CLI Reference](#cli-reference)). Results are still written as NIfTI and JSON. DICOM output is planned.
+- **DICOM output (partial)**: DICOM **input** is supported for both pipelines — a series directory is read directly (see [CLI Reference](#cli-reference)). **Segmentation** can now also write results as a DICOM Segmentation (SEG) object referencing the source series (`nninfe-seg --output-format dicom-seg`, requires DICOM input). **Detection** results are still written as NIfTI/JSON/CSV only; a DICOM output for detections (SEG or Structured Report) is planned.
 - **Mask is bounding-box based for detection**: While the native nnDetection framework give the possibility to output segmentation contours for some detected objects (not all), the output mask for the present detection pipeline (`_mask.nii.gz`) fills bounding boxes. Pixel-level contours is reserved for the segmentation pipeline for the moment. Could be patched if there are needs.
 - **Single fold**: Uses one fold only. Multi-fold ensemble was intentionally deferred for industrialization simplicity and speed across both detection and segmentation.
 - **Structured logging**: Currently all output is `print()`. Production should use Python `logging` with levels (DEBUG/INFO/WARNING).
