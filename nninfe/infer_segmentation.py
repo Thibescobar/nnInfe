@@ -10,11 +10,12 @@ from pathlib import Path
 import SimpleITK as sitk
 
 from nninfe.common.cli import collect_image_inputs
+from nninfe.common.io import write_segmentation_dicom_seg
 from nninfe.common.preprocessing import pad_volume_to_patch_size, preprocess_image, resample_mask_to_reference
 from nninfe.common.session import BACKENDS, create_session
 from nninfe.segmentation.pipeline import (
+    build_reference_mask,
     crop_volume_to_shape,
-    export_segmentation_mask,
     extract_plan_inference,
     flip_image_axes,
     run_sliding_window_segmentation,
@@ -54,8 +55,15 @@ def process_single_image(
     patch_size: tuple,
     overlap: float,
     pad_value: str = "0.0",
+    output_format: str = "nifti",
+    seg_encoding: str = "binary",
 ) -> str:
-    """Process one image and return output mask path."""
+    """Process one image and return the primary output path.
+
+    ``output_format`` is ``nifti`` (default), ``dicom-seg`` (a DICOM SEG referencing the source
+    series — requires DICOM input), or ``both``. ``seg_encoding`` (``binary`` | ``labelmap``)
+    selects the DICOM SEG representation (see ``write_segmentation_dicom_seg``).
+    """
     image_name = Path(image_path).name
     if image_name.endswith(".nii.gz"):
         image_name = image_name[:-7]
@@ -99,21 +107,43 @@ def process_single_image(
 
     print("[3/3] Exporting mask …", flush=True)
     t0 = time.time()
-    out_mask = str(output_dir / f"{image_name}_seg.nii.gz")
-    export_segmentation_mask(
+    output_dir.mkdir(parents=True, exist_ok=True)
+    mask_ref = build_reference_mask(
         labels_zyx=labels,
         preprocessed_image=preprocessed,
         reference=orig_meta,
-        output_path=out_mask,
         resample_mask_to_reference=resample_mask_to_reference,
     )
+
+    outputs = []
+    if output_format in ("nifti", "both"):
+        out_nii = str(output_dir / f"{image_name}_seg.nii.gz")
+        sitk.WriteImage(mask_ref, out_nii)
+        outputs.append(out_nii)
+        print(f"      mask  -> {out_nii}", flush=True)
+
+    if output_format in ("dicom-seg", "both"):
+        if Path(image_path).is_dir():
+            out_dcm = str(output_dir / f"{image_name}_seg.dcm")
+            written = write_segmentation_dicom_seg(mask_ref, image_path, out_dcm, seg_encoding=seg_encoding)
+            if written:
+                outputs.append(written)
+                print(f"      SEG   -> {written}", flush=True)
+            else:
+                print("      SEG   -> skipped (mask has no foreground to segment)", flush=True)
+        else:
+            print(
+                f"      SEG   -> skipped ('{image_name}' is not a DICOM series; "
+                "DICOM SEG output requires DICOM input)",
+                flush=True,
+            )
+
     done_path = str(output_dir / ".done")
     with open(done_path, "w") as f:
         f.write("done")
-    print(f"      mask  -> {out_mask}", flush=True)
     print(f"      .done -> {done_path}", flush=True)
     print(f"      exports done  ({time.time() - t0:.2f}s)", flush=True)
-    return out_mask
+    return outputs[0] if outputs else done_path
 
 
 def main() -> None:
@@ -131,6 +161,20 @@ def main() -> None:
         "--pad-value",
         default="0.0",
         help="Padding value to use. Can be a number or 'min' to use the minimum value of the image minus 1 (default: 0.0)",
+    )
+    parser.add_argument(
+        "--output-format",
+        choices=["nifti", "dicom-seg", "both"],
+        default="nifti",
+        help="Result format: nifti (default), dicom-seg (DICOM SEG referencing the source series, "
+        "requires DICOM input), or both",
+    )
+    parser.add_argument(
+        "--seg-encoding",
+        choices=["binary", "labelmap"],
+        default="binary",
+        help="DICOM SEG representation: binary (default, widest viewer support) or labelmap "
+        "(compact, size independent of class count — better for many-class masks, needs a newer viewer)",
     )
     parser.add_argument(
         "--backend",
@@ -157,6 +201,11 @@ def main() -> None:
         sys.exit("Error: --output-dir is required for inference")
     if not 0.0 <= args.overlap < 1.0:
         sys.exit(f"Error: --overlap must be in [0, 1), got: {args.overlap}")
+    if args.output_format in ("dicom-seg", "both") and args.image_path and not Path(args.image_path).is_dir():
+        sys.exit(
+            "Error: --output-format dicom-seg/both requires DICOM input (a series directory); "
+            f"--image-path is not a directory: {args.image_path}"
+        )
 
     defaults = {a.dest: a.default for a in parser._actions if a.default is not argparse.SUPPRESS}
     print("Parameters:", flush=True)
@@ -226,6 +275,8 @@ def main() -> None:
             patch_size=patch_size,
             overlap=args.overlap,
             pad_value=args.pad_value,
+            output_format=args.output_format,
+            seg_encoding=args.seg_encoding,
         )
         summary.append((image_name, out_mask))
 
