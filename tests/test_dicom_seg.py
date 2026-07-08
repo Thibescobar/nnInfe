@@ -26,8 +26,13 @@ DX, DY, DZ = 0.7617, 0.7617, 1.25
 OX, OY, OZ = 10.0, 20.0, 30.0
 
 
-def _write_synthetic_series(out_dir):
-    """Write an NZ-slice axial CT series with the attributes highdicom needs to build a SEG."""
+def _write_synthetic_series(out_dir, omit_type2_attrs=False):
+    """Write an NZ-slice axial CT series with the attributes highdicom needs to build a SEG.
+
+    With ``omit_type2_attrs=True`` the optional Type-2 patient/study tags (AccessionNumber,
+    StudyID, dates, demographics) are left out — mimicking an anonymized / partial real-world
+    series, which highdicom reads directly and would otherwise crash on.
+    """
     study_uid, series_uid, for_uid = generate_uid(), generate_uid(), generate_uid()
     vol = np.random.default_rng(0).integers(-1000, 2000, size=(NZ, NY, NX)).astype(np.int16)
     for k in range(NZ):
@@ -38,12 +43,13 @@ def _write_synthetic_series(out_dir):
         ds = FileDataset(None, {}, file_meta=fm, preamble=b"\0" * 128)
         ds.PatientID = "TEST-0001"
         ds.PatientName = "Synthetic^CT"
-        ds.PatientBirthDate = "19700101"
-        ds.PatientSex = "O"
-        ds.AccessionNumber = "ACC0001"
-        ds.StudyID = "1"
-        ds.StudyDate = "20260101"
-        ds.StudyTime = "120000"
+        if not omit_type2_attrs:
+            ds.PatientBirthDate = "19700101"
+            ds.PatientSex = "O"
+            ds.AccessionNumber = "ACC0001"
+            ds.StudyID = "1"
+            ds.StudyDate = "20260101"
+            ds.StudyTime = "120000"
         ds.Modality = "CT"
         ds.StudyInstanceUID = study_uid
         ds.SeriesInstanceUID = series_uid
@@ -188,6 +194,24 @@ class TestWriteSegmentationDicomSeg:
         mask = _mask_in_source_geometry(series_dir, labels)
         with pytest.raises(ValueError, match="seg_encoding"):
             write_segmentation_dicom_seg(mask, str(series_dir), str(tmp_path / "x.dcm"), seg_encoding="bogus")
+
+    def test_source_missing_type2_attrs(self, tmp_path):
+        """Anonymized/real series often lack Type-2 tags (e.g. AccessionNumber) that highdicom
+        reads directly off the source image; they must be backfilled, not crash the SEG write."""
+        series_dir = tmp_path / "series"
+        series_dir.mkdir()
+        _write_synthetic_series(series_dir, omit_type2_attrs=True)
+
+        labels = np.zeros((NZ, NY, NX), dtype=np.uint8)
+        labels[3, 4:8, 4:8] = 1
+        mask = _mask_in_source_geometry(series_dir, labels)
+
+        out = tmp_path / "seg.dcm"
+        assert write_segmentation_dicom_seg(mask, str(series_dir), str(out)) == str(out)
+        seg = pydicom.dcmread(str(out))
+        assert seg.Modality == "SEG"
+        assert len(seg.SegmentSequence) == 1
+        assert seg.AccessionNumber == ""  # backfilled to empty (valid Type-2), did not crash
 
 
 def _seg_plan():
