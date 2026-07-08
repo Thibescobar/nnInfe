@@ -157,6 +157,33 @@ def _seg_pixel_array_from_mask(mask_ref: sitk.Image, source_datasets: list) -> T
     return np.stack(frames, axis=0), kept
 
 
+# Patient/Study attributes highdicom reads *directly* off the source image when building a SEG
+# (no default -> a missing tag raises AttributeError). These are all Type 2 (required, but a
+# zero-length value is legal), and real-world / anonymized series frequently drop some
+# (AccessionNumber, StudyID, dates, patient demographics). Backfilling "" keeps the SEG
+# standards-conformant instead of crashing on such inputs.
+_SEG_SOURCE_TYPE2_ATTRS = (
+    "PatientID",
+    "PatientName",
+    "PatientBirthDate",
+    "PatientSex",
+    "AccessionNumber",
+    "StudyID",
+    "StudyDate",
+    "StudyTime",
+)
+
+
+def _backfill_seg_source_attributes(datasets: list) -> None:
+    """Ensure every source dataset carries the Type-2 attributes highdicom needs (see above),
+    setting any that are missing to an empty value. Mutates in place (these are our own
+    freshly-read copies, never written back to disk)."""
+    for ds in datasets:
+        for attr in _SEG_SOURCE_TYPE2_ATTRS:
+            if attr not in ds:
+                setattr(ds, attr, "")
+
+
 def write_segmentation_dicom_seg(
     mask_ref: sitk.Image,
     source_series_dir: str,
@@ -201,6 +228,7 @@ def write_segmentation_dicom_seg(
 
     files = list_dicom_series_files(source_series_dir)
     source_datasets = [pydicom.dcmread(f) for f in files]
+    _backfill_seg_source_attributes(source_datasets)
     pixel_array, source_datasets = _seg_pixel_array_from_mask(mask_ref, source_datasets)
 
     present = sorted(int(v) for v in np.unique(pixel_array) if v != 0)
