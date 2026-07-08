@@ -180,21 +180,21 @@ def clip_boxes_to_image_shape(
 ) -> Dict[str, np.ndarray]:
     if len(detection["boxes"]) == 0:
         return detection
-        
+
     boxes = detection["boxes"].copy()
     z_max, y_max, x_max = image_shape_zyx
-    
+
     boxes[:, D0_MIN] = np.clip(boxes[:, D0_MIN], 0, z_max)
     boxes[:, D0_MAX] = np.clip(boxes[:, D0_MAX], 0, z_max)
     boxes[:, D1_MIN] = np.clip(boxes[:, D1_MIN], 0, y_max)
     boxes[:, D1_MAX] = np.clip(boxes[:, D1_MAX], 0, y_max)
     boxes[:, D2_MIN] = np.clip(boxes[:, D2_MIN], 0, x_max)
     boxes[:, D2_MAX] = np.clip(boxes[:, D2_MAX], 0, x_max)
-    
+
     valid = (boxes[:, D0_MAX] > boxes[:, D0_MIN]) & \
             (boxes[:, D1_MAX] > boxes[:, D1_MIN]) & \
             (boxes[:, D2_MAX] > boxes[:, D2_MIN])
-            
+
     clipped_det = {k: v[valid].copy() if k == "boxes" else v[valid] for k, v in detection.items()}
     clipped_det["boxes"] = boxes[valid]
     return clipped_det

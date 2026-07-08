@@ -1,10 +1,10 @@
 # ONNX Inference Pipeline for nnDetection & nnUNet
 
-![Python](https://img.shields.io/badge/python-≥3.9-blue)
+![Python](https://img.shields.io/badge/python-≥3.10-blue)
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
 ![CI](https://img.shields.io/badge/CI-GitHub%20Actions-blue)
-![Tests](https://img.shields.io/badge/tests-120%20passed-brightgreen)
-![Coverage](https://img.shields.io/badge/coverage-95%25-brightgreen)
+![Tests](https://img.shields.io/badge/tests-143%20passed-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-94%25-brightgreen)
 ![Linting](https://img.shields.io/badge/linting-ruff-purple)
 
 Standalone ONNX inference pipeline for **nnDetection** (3D medical object detection) and **nnUNet** (3D medical image segmentation).
@@ -39,7 +39,6 @@ Please also cite the original nnDetection, nnUNet, ONNX Runtime, and other upstr
 
 ## Table of Contents
 
-- [Project Structure](#project-structure)
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
@@ -55,57 +54,9 @@ Please also cite the original nnDetection, nnUNet, ONNX Runtime, and other upstr
 
 ---
 
-## Project Structure
-
-```
-nninfe/
-├── .gitignore                         # Git ignore rules
-├── pyproject.toml                     # Package config, dependencies, ruff & pytest settings
-├── LICENSE                            # Apache 2.0
-├── README.md                          # This file
-├── .github/
-│   └── workflows/
-│       └── ci.yml                     # GitHub Actions CI (lint + test, Python 3.9 & 3.11)
-├── nninfe/
-│   ├── __init__.py
-│   ├── infer_detection.py     # Detection CLI
-│   ├── infer_segmentation.py    # Segmentation CLI
-│   ├── common/                        # Shared preprocessing, sliding-window, I/O, session
-│   ├── detection/                     # Detection-specific anchors, post-processing, export
-│   ├── segmentation/                  # Segmentation-specific plan, reconstruction
-│   ├── tools/
-│   │   ├── pkl_to_json.py       # Convert plan_inference.pkl → JSON (one-shot)
-│   │   └── onnx_shape_inference.py  # ONNX shape inference for TRT (one-shot)
-│   └── data/                          # ⚠ NOT TRACKED IN GIT — see below
-└── tests/
-    ├── test_anchors.py                # Detection anchor generation
-    ├── test_cli.py                    # Common CLI validation helpers
-    ├── test_export.py                 # Detection export and mask helpers
-    ├── test_export_scaling.py         # Detection coordinate scaling
-    ├── test_integration.py            # Detection end-to-end with mocked session
-    ├── test_postprocessing.py         # Detection post-processing
-    ├── test_preprocessing.py          # Shared preprocessing helpers
-    ├── test_segmentation.py           # Segmentation plan + reconstruction + export
-    ├── test_session.py                # Session creation and inference helpers
-    └── test_sliding_window.py         # Shared sliding-window logic
-```
-
-### `data/` folder (external, not versioned)
-
-All file paths are passed via CLI arguments (`--model-path`, `--plan-path`, `--image-path`, etc.), so **you can store your model and images anywhere on your system**. The `data/` folder inside `nninfe/` is simply a convenience location used during development and is excluded from the git repository.
-
-Required files to run inference:
-- An ONNX model file (`.onnx`) — passed via `--model-path`.
-- An inference config file (`.json`) — passed via `--plan-path` (e.g.`plan_inference.json` for detection, `plans.json` for segmentation).
-
-Optional / auto-generated:
-- `trt_engine_cache_fp16/` — TensorRT compiled engines, created automatically next to the model on first TRT run. Specific to GPU architecture (e.g. sm86 for RTX 3070), regenerated if missing.
-
----
-
 ## Requirements
 
-- Python ≥ 3.9
+- Python ≥ 3.10
 - numpy
 - SimpleITK
 - onnxruntime (variant depends on backend, see [Installation](#installation))
@@ -123,73 +74,63 @@ Optional (for `--nms-backend nndet`):
 | Backend | Windows | Linux |
 |---------|---------|-------|
 | `cpu` | ✅ | ✅ |
-| `openvino` | ❌ | ✅ |
-| `cuda` | ❌ | ✅ |
-| `trt` | ❌ | ✅ |
+| `openvino` |  | ✅ |
+| `cuda` | ✅ | ✅ |
+| `trt` | ✅ | ✅ |
 
 > **Important:** `onnxruntime`, `onnxruntime-gpu`, and `onnxruntime-openvino` are **mutually exclusive** pip packages and they all install to the same `onnxruntime` namespace. Installing one silently overwrites the other.
 
-> **Support on Windows:** It has been tested for the CPU backend for development convenience, and the installation steps apply only to green-checkmarked configurations. However, small efforts to the installation and configuration would be enough to enable all backends on Windows and even other operating systems easily.
+> **Support on Windows:** Only `openvino` remains untested on Windows.
 
-### CPU environment (all platforms)
+### Base setup
 
-```bash
-conda create -n nnInfe python=3.9
-conda activate nnInfe
-pip install -e ".[cpu]"
-```
-
-### OpenVINO environment (Linux only)
+Each backend lives in its own conda environment, and they all follow the same three steps — create the env, activate it, install the package. Only the pip extra differs:
 
 ```bash
-conda create -n nnInfe-ov python=3.9
-conda activate nnInfe-ov
-pip install -e ".[openvino]"
+conda create -n <env-name> python=3.10
+conda activate <env-name>
+pip install -e "<extra>"
 ```
 
-Supports backends: `cpu`, `openvino`.
+| Environment | Backends | `<extra>` |
+|-------------|----------|-----------|
+| `nnInfe` (all platforms) | `cpu` | `.[cpu]` |
+| `nnInfe-ov` (Linux) | `cpu`, `openvino` | `.[openvino]` |
+| `nnInfe-trt` (Linux & Windows) | `cpu`, `cuda`, `trt` | `.[gpu]` |
 
-### GPU environment (Linux only)
 
-```bash
-conda create -n nnInfe-trt python=3.9
-conda activate nnInfe-trt
-pip install -e .
-pip install onnxruntime-gpu \
-  --index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-11/pypi/simple/
-conda install cudnn=8
-pip install tensorrt==10.3.0 tensorrt-cu12_bindings==10.3.0 tensorrt-cu12_libs==10.3.0
-pip install nvidia-cuda-runtime-cu12==12.2.140 nvidia-cublas-cu12==12.2.5.6
-```
+> **GPU automatic linkage:** The `.[gpu]` extra (installed by the base setup above) is the **unified CUDA 12 stack** used identically on Linux and Windows: `onnxruntime-gpu`, the CUDA 12 / cuDNN 9 runtime wheels, and a compatible `tensorrt-cu12` (pinned `<11` — rationale in [pyproject.toml](pyproject.toml)). No `LD_LIBRARY_PATH` and no conda activation script are needed: `create_session()` makes these libraries discoverable in-process at runtime (see `_preload_gpu_libraries` in `nninfe/common/session.py`) by calling ONNX Runtime's cross-platform `preload_dlls()` for CUDA + cuDNN and placing `tensorrt_libs` on the native loader search path (prepended to `PATH` on Windows, preloaded with RUNPATH resolution on Linux). Both the `cuda` and `trt` backends have been verified on Linux and Windows. Check the `ONNX Runtime providers` line printed at session creation.
 
-> `onnxruntime-gpu` is installed manually because the CUDA version depends on your driver. Always install it **after** `pip install -e .`.
+> **GPU Linux fallback (rarely needed):** on a hardened or non-standard loader configuration where the wheel's RUNPATH is ignored, the arch-specific `libnvinfer_builder_resource_*.so` may not be found and the TensorRT execution provider falls back to CPU. If that happens, add the wheel's `tensorrt_libs` to `LD_LIBRARY_PATH`:
+> ```bash
+> export LD_LIBRARY_PATH="$(python -c 'import os,sysconfig;print(os.path.join(sysconfig.get_paths()["purelib"],"tensorrt_libs"))'):$LD_LIBRARY_PATH"
+> ```
 
-Then configure `LD_LIBRARY_PATH` (create once):
-
-```bash
-CONDA_PREFIX=$CONDA_PREFIX
-mkdir -p "$CONDA_PREFIX/etc/conda/activate.d"
-cat > "$CONDA_PREFIX/etc/conda/activate.d/env_vars.sh" << 'EOF'
-#!/bin/bash
-SITE="$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
-export LD_LIBRARY_PATH="$SITE/tensorrt_libs:$SITE/nvidia/cuda_runtime/lib:$SITE/nvidia/cublas/lib:$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
-EOF
-```
-
-Supports backends: `cpu`, `cuda`, `trt`.
-
-### Validated GPU Configuration
-
-| Component | Version |
-|-----------|---------|
-| OS | Ubuntu 22.04 |
-| GPU | NVIDIA RTX 3070 (8 GB, sm86) |
-| Driver | 535.309 |
-| CUDA toolkit (system) | 11.7 |
-| TensorRT | 10.3 |
-| Python | 3.9 |
+> **Why Python ≥ 3.10?** The GPU backends use the CUDA 12 wheels, which require `onnxruntime-gpu` ≥ 1.20 — and ONNX Runtime **dropped Python 3.9 at v1.20** (3.9 caps at ORT 1.19.2). The project therefore requires Python ≥ 3.10 (`requires-python = ">=3.10"`). `--nms-backend nndet` could need some extra work to be installed with Python > 3.9.
 
 > **Tip:** If you want a single unified environment with all backends, you can [build ONNX Runtime from source](https://onnxruntime.ai/docs/build/) with multiple execution providers enabled (e.g. `--use_cuda --use_tensorrt --use_openvino`).
+
+### Docker images
+
+Three `python:3.10-slim`-based Dockerfiles build backend-specific images:
+
+| File | Backends | Install |
+|------|----------|---------|
+| `Dockerfile` | `cpu` | `.[cpu]` |
+| `Dockerfile.ov` | `cpu`, `openvino` | `.[openvino]` |
+| `Dockerfile.trt` | `cpu`, `cuda`, `trt` | `.[gpu]`, multi-stage + slimmed |
+
+Example:
+```bash
+docker build -f Dockerfile.trt -t nninfe-trt .
+docker run --rm --gpus all nninfe-trt nninfe-det --backend trt --trt-fp16 \
+  --model-path /data/model_onnx_shaped.onnx --plan-path /data/plan_inference.json \
+  --image-path /data/img.nii.gz --output-dir /data/out
+```
+
+**GPU image size.** `Dockerfile.trt` keeps the current versions (onnxruntime-gpu 1.23.x, TensorRT 10.16) but is slimmed in a multi-stage build: it keeps only TensorRT's **PTX/JIT builder resource** — dropping the per-arch `sm*` and Windows `win_*` resources (TensorRT JIT-compiles the engine for whatever GPU it runs on) — then strips debug symbols and drops headers, static libs and bytecode. Result: **~8 GB** (from ~17 GB unslimmed), still portable across NVIDIA architectures, with both `cuda` and `trt` working.
+
+> **Opt-in `--build-arg SLIM_CUDNN=1` (→ ~6.5 GB).** Additionally drops cuDNN's precompiled + advanced kernels. In the `trt` path convolutions run *inside* TensorRT, so cuDNN is unused — **but** the `cuda` backend routes convolutions through cuDNN and would break on a conv model. Use it **only** for TensorRT-only deployments, and validate with your own model first.
 
 ---
 
@@ -216,7 +157,7 @@ nninfe-det \
   --backend trt --trt-fp16
 ```
 
-Batch mode (all NIfTI in a directory):
+Batch mode (each entry in the directory is one image — a NIfTI file or a DICOM series folder):
 
 ```bash
 nninfe-det \
@@ -271,8 +212,8 @@ nninfe-seg \
 
 | Argument | Description |
 |----------|-------------|
-| `--image-path` | Path to a single NIfTI image (`.nii` or `.nii.gz`). |
-| `--image-dir` | Path to a directory of NIfTI images (batch mode). |
+| `--image-path` | A single input image: a NIfTI file (`.nii`/`.nii.gz`) or a DICOM series directory. |
+| `--image-dir` | Batch mode: a directory where **each entry is one image** — a NIfTI file or a DICOM series subdirectory (NIfTI and DICOM may be mixed). |
 
 ### Output
 
@@ -306,11 +247,13 @@ nninfe-seg \
 | `--trt-fp16` | off | Enable FP16 inference for TensorRT. |
 | `--build-engine-only` | off | Build TRT engine cache and exit (no image/output needed). |
 
-### `nninfe-seg configuration` 
+### `nninfe-seg` options
 
 | Argument | Description |
 |----------|-------------|
 | `--configuration` | Plan configuration name (default: `3d_fullres`). |
+| `--output-format` | `nifti` (default), `dicom-seg` (DICOM SEG referencing the source series — requires DICOM input), or `both`. |
+| `--seg-encoding` | DICOM SEG representation: `binary` (default, widest viewer support) or `labelmap` (compact, size independent of class count — better for many-class masks, needs a newer viewer). |
 
 
 ## Pipeline Architecture
@@ -492,6 +435,10 @@ Resampled to the **original image geometry** (spacing, origin, direction, size) 
 
 A voxel-level label map where integer values represent semantic classes as defined in standard nnUNet exports. Re-sampled natively back to the input reference image's spacing and geometry.
 
+### Output: `{name}_seg.dcm` (Segmentation, `--output-format dicom-seg` / `both`)
+
+A DICOM Segmentation (SEG) object referencing the source series (shared Frame of Reference), with one segment per non-zero class (sparse label ids are remapped to contiguous segment numbers, the original id kept in the segment label). Requires DICOM **input**, since a SEG is spatially bound to the source instances. `--seg-encoding` selects `binary` (default — one binary plane per segment, widest viewer support, but file size *and export time* grow with the class count) or `labelmap` (a single compact label map — size and write time roughly independent of class count, so much smaller and faster for many-class masks; e.g. an 83-class whole-body model exports ~30× faster and ~3× smaller, but requires a newer viewer/PACS). The `nninfe` version is recorded as the algorithm/software version for traceability. Overlays directly on the source study in any DICOM viewer / PACS.
+
 ---
 
 ## Inference Backends
@@ -549,7 +496,7 @@ All backends produce **26 detections** — results are consistent across backend
 ## Limitations & Known Issues
 
 - **Multiple classes for detection**: Detection currently exposes class output natively mapped (label 0, etc). Multi-class might require specific per-class NMS tracking in nnDetection pipelines if custom configuration differs.
-- **No DICOM handling**: Input must be NIfTI (`.nii` or `.nii.gz`). DICOM→NIfTI conversion should be done upstream. Patched soon.
+- **DICOM output (partial)**: DICOM **input** is supported for both pipelines — a series directory is read directly (see [CLI Reference](#cli-reference)). **Segmentation** can now also write results as a DICOM Segmentation (SEG) object referencing the source series (`nninfe-seg --output-format dicom-seg`, requires DICOM input). **Detection** results are still written as NIfTI/JSON/CSV only; a DICOM output for detections (SEG or Structured Report) is planned.
 - **Mask is bounding-box based for detection**: While the native nnDetection framework give the possibility to output segmentation contours for some detected objects (not all), the output mask for the present detection pipeline (`_mask.nii.gz`) fills bounding boxes. Pixel-level contours is reserved for the segmentation pipeline for the moment. Could be patched if there are needs.
 - **Single fold**: Uses one fold only. Multi-fold ensemble was intentionally deferred for industrialization simplicity and speed across both detection and segmentation.
 - **Structured logging**: Currently all output is `print()`. Production should use Python `logging` with levels (DEBUG/INFO/WARNING).
@@ -567,8 +514,8 @@ pip install -e ".[cpu,dev]"
 # OpenVINO (Linux only)
 pip install -e ".[openvino,dev]"
 
-# GPU (Linux only — see GPU environment above for onnxruntime-gpu setup)
-pip install -e ".[dev]"
+# GPU / cuda + trt (Linux & Windows)
+pip install -e ".[gpu,dev]"
 ```
 
 ```bash

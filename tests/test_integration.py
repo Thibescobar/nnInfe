@@ -457,16 +457,17 @@ class TestMain:
     @patch("nninfe.infer_detection.process_single_image")
     @patch("sys.argv", new_callable=list)
     def test_main_trt_batch(self, mock_argv, mock_process, mock_create, tmp_path):
-        from nninfe.infer_detection import main
         import json
+
+        from nninfe.infer_detection import main
 
         model = tmp_path / "model.onnx"
         model.write_text("")
         plan = tmp_path / "plan.json"
-        
+
         plan_dict = _make_plan()
         plan.write_text(json.dumps(plan_dict))
-        
+
         # Make batch images
         d = tmp_path / "imgs"
         d.mkdir()

@@ -1,42 +1,59 @@
-FROM nvidia/cuda:12.2.2-cudnn8-runtime-ubuntu22.04
+# ---- builder: install + aggressively slim the CUDA 12 GPU stack ----
+FROM python:3.10-slim AS builder
 
-# Install python and necessary system packages
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.11 \
-    python3.11-venv \
-    python3-pip \
-    python3.11-dev \
-    libgomp1 \
+# binutils provides `strip` (build-stage only; never reaches the runtime image).
+RUN apt-get update && apt-get install -y --no-install-recommends binutils \
     && rm -rf /var/lib/apt/lists/*
 
-# Symlink python3 to python
-RUN ln -s /usr/bin/python3.11 /usr/bin/python
-
 WORKDIR /app
-
-# Create a virtualenv
-RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
 ENV PIP_NO_CACHE_DIR=1
 
-# Pre-install specific TRT and CUDA pip dependencies from the README
-RUN pip install tensorrt==10.3.0 tensorrt-cu12_bindings==10.3.0 tensorrt-cu12_libs==10.3.0 && \
-    pip install nvidia-cuda-runtime-cu12==12.2.140 nvidia-cublas-cu12==12.2.5.6
-
-# Copy project files
 COPY pyproject.toml README.md ./
 COPY nninfe/ nninfe/
 
-# Install the package itself
-RUN pip install .
+# `gpu` extra = onnxruntime-gpu + CUDA 12 / cuDNN 9 wheels + tensorrt-cu12<11 (same as bare metal).
+RUN pip install ".[gpu]"
 
-# Install ONNX Runtime GPU 
-RUN pip install onnxruntime-gpu --index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-11/pypi/simple/
+# Slim the install (this is what keeps the image small — see the "Docker images" section in the README):
+#  - TensorRT builder resources: keep ONLY the PTX/JIT resource; drop every per-arch (sm*)
+#    and Windows (win_*) resource. TensorRT JIT-compiles the engine from PTX for whatever
+#    GPU it runs on, so the image stays portable across NVIDIA archs. This removes ~5 GB.
+#  - Strip debug symbols; drop headers, static libs, bytecode and type stubs (runtime-useless).
+RUN set -eux; \
+    SP="$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"; \
+    rm -f "$SP"/tensorrt_libs/libnvinfer_builder_resource_sm* \
+          "$SP"/tensorrt_libs/libnvinfer_builder_resource_win_*; \
+    find "$SP" -name '*.so*' -type f -exec strip --strip-unneeded {} + 2>/dev/null || true; \
+    find "$SP" -type d -name include -exec rm -rf {} + 2>/dev/null || true; \
+    find "$SP" -name '*.a' -delete; \
+    find "$SP" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true; \
+    find "$SP" \( -name '*.pyc' -o -name '*.pyi' \) -delete
 
-# Setup LD_LIBRARY_PATH dynamically so it finds the python packages
-RUN SITE="$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')" && \
-    echo "export LD_LIBRARY_PATH=\"$SITE/tensorrt_libs:$SITE/nvidia/cuda_runtime/lib:$SITE/nvidia/cublas/lib:\$LD_LIBRARY_PATH\"" > /etc/profile.d/trt_env.sh
+# Optional further ~0.8 GB (opt-in, OFF by default): drop cuDNN's precompiled + advanced
+# kernels. In the TensorRT path convolutions run *inside* TensorRT, so cuDNN is unused —
+# but the `cuda` backend routes convs through the CUDA EP and DOES need them. Enable ONLY
+# for TensorRT-only deployments, after validating with your model:
+#   docker build --build-arg SLIM_CUDNN=1 -f Dockerfile.trt -t nninfe-trt .
+ARG SLIM_CUDNN=0
+RUN if [ "$SLIM_CUDNN" = "1" ]; then \
+      SP="$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"; \
+      rm -f "$SP"/nvidia/cudnn/lib/libcudnn_engines_precompiled.so.9 \
+            "$SP"/nvidia/cudnn/lib/libcudnn_adv.so.9; \
+    fi
 
-ENV BASH_ENV=/etc/profile.d/trt_env.sh
+# ---- runtime: copy only the slimmed packages into a clean image ----
+FROM python:3.10-slim
 
-CMD ["/bin/bash", "-c", "source /etc/profile.d/trt_env.sh && nninfe-det --help"]
+# libgomp1 is needed by ONNX Runtime; the CUDA/cuDNN/TensorRT userspace libraries come from
+# the copied wheels below (the NVIDIA driver's libcuda is injected at `docker run --gpus all`
+# by the NVIDIA Container Toolkit).
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
+COPY --from=builder /usr/local/bin/nninfe-det /usr/local/bin/nninfe-seg /usr/local/bin/
+
+# create_session() preloads the CUDA/cuDNN/TensorRT libraries in-process (ORT's preload_dlls()
+# for CUDA + cuDNN, and RUNPATH resolution for TensorRT's PTX builder resource), so no
+# LD_LIBRARY_PATH or activation script is required — verified via `docker run --gpus all`.
+CMD ["nninfe-det", "--help"]

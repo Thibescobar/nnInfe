@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Standalone 3D medical object detection inference pipeline using nnDetection ONNX models"
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [
     {name = "Thibault Escobar"},
 ]
@@ -24,6 +24,8 @@ classifiers = [
 dependencies = [
     "numpy",
     "SimpleITK",
+    "pydicom",
+    "highdicom",
 ]
 
 [project.scripts]
@@ -33,6 +35,20 @@ nninfe-seg = "nninfe.infer_segmentation:main"
 [project.optional-dependencies]
 cpu = ["onnxruntime"]
 openvino = ["onnxruntime-openvino", "numpy<2"]
+# GPU (cuda + trt) — unified CUDA 12 stack, same on Linux and Windows.
+# tensorrt-cu12 is capped < 11 because onnxruntime-gpu links TensorRT 10 (nvinfer 10);
+# a TensorRT 11 wheel would fail to load and the TensorRT EP would silently fall back to
+# CPU. Bump this cap only together with an onnxruntime-gpu build compiled against TRT 11.
+gpu = [
+    "onnxruntime-gpu>=1.21",
+    "nvidia-cuda-runtime-cu12",
+    "nvidia-cublas-cu12",
+    "nvidia-cufft-cu12",
+    "nvidia-curand-cu12",
+    "nvidia-cuda-nvrtc-cu12",
+    "nvidia-cudnn-cu12",
+    "tensorrt-cu12<11",
+]
 dev = [
     "pytest",
     "pytest-cov",
@@ -44,7 +60,7 @@ include = ["nninfe*"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py39"
+target-version = "py310"
 exclude = ["nninfe/tools/"]
 
 [tool.ruff.lint]

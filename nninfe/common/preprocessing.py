@@ -5,6 +5,8 @@ from typing import List, Optional, Tuple, Union
 import numpy as np
 import SimpleITK as sitk
 
+from nninfe.common.io import read_image, read_image_metadata
+
 
 def pad_volume_to_patch_size(
     volume_zyx: np.ndarray,
@@ -67,6 +69,28 @@ def resample_image(
     return resampler.Execute(image)
 
 
+def resample_mask_to_reference(mask: sitk.Image, reference) -> sitk.Image:
+    """Resample a label mask back to the geometry of a reference image (NIfTI or DICOM).
+
+    Inverse of :func:`resample_image`: maps a model-space result into the original input's
+    voxel frame so it overlays the source. Nearest-neighbor (label-preserving).
+
+    ``reference`` is either a path (read via :func:`nninfe.common.io.read_image_metadata`)
+    or an already-read geometry dict (same keys). Passing the dict avoids re-reading the
+    input — notably a multi-slice DICOM series, which has no header-only geometry read.
+    """
+    meta = reference if isinstance(reference, dict) else read_image_metadata(reference)
+    resampler = sitk.ResampleImageFilter()
+    resampler.SetOutputSpacing(meta["spacing_xyz"])
+    resampler.SetSize(meta["size_xyz"])
+    resampler.SetOutputDirection(meta["direction"])
+    resampler.SetOutputOrigin(meta["origin"])
+    resampler.SetInterpolator(sitk.sitkNearestNeighbor)
+    resampler.SetDefaultPixelValue(0)
+    resampler.SetTransform(sitk.Transform())
+    return resampler.Execute(mask)
+
+
 def clip_image(image: sitk.Image, lower: float, upper: float) -> sitk.Image:
     """Clamp intensities to [lower, upper]."""
     clamper = sitk.ClampImageFilter()
@@ -87,9 +111,22 @@ def preprocess_image(
     image_path: str,
     plan_inference: dict,
     verbose: bool = True,
-) -> sitk.Image:
-    """Preprocessing chain (no crop): cast -> resample -> clip -> normalize."""
-    image = sitk.ReadImage(image_path)
+) -> Tuple[sitk.Image, dict]:
+    """Preprocessing chain (no crop): cast -> resample -> clip -> normalize.
+
+    ``image_path`` may be a NIfTI file or a DICOM series directory (see ``read_image``).
+    Returns ``(preprocessed_image, original_metadata)`` — the original geometry
+    (size/spacing/origin/direction) is captured from the single input read so results can
+    be mapped back to the input frame without re-reading it (key for DICOM series, which
+    have no cheap header-only geometry read).
+    """
+    image = read_image(image_path)
+    original_metadata = {
+        "size_xyz": image.GetSize(),
+        "spacing_xyz": image.GetSpacing(),
+        "origin": image.GetOrigin(),
+        "direction": image.GetDirection(),
+    }
     image = sitk.Cast(image, sitk.sitkFloat32)
     if verbose:
         _sf = sitk.StatisticsImageFilter()
@@ -125,4 +162,4 @@ def preprocess_image(
         _sf.Execute(image)
         print(f"      normalized intensity range: [{_sf.GetMinimum():.2f}, {_sf.GetMaximum():.2f}]  mean: {_sf.GetMean():.2f}  std: {_sf.GetSigma():.2f}", flush=True)
 
-    return image
+    return image, original_metadata

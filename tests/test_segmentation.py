@@ -1,22 +1,19 @@
 """Tests for nnUNet segmentation helpers and CLI-level processing."""
 
+import json
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 import SimpleITK as sitk
 
-from nninfe.infer_segmentation import process_single_image, main
+from nninfe.infer_segmentation import main, process_single_image
 from nninfe.segmentation.pipeline import (
     extract_plan_inference,
     flip_image_axes,
     run_sliding_window_segmentation,
 )
-
-import sys
-import json
-import pytest
-from unittest.mock import patch
 
 
 def _make_nifti(tmp_path, shape=(8, 8, 8), name="seg.nii.gz"):
@@ -174,7 +171,7 @@ class TestSegmentationMain:
     def test_main_single_image(self, mock_argv, mock_process, mock_create, tmp_path):
         model_path = tmp_path / "model.onnx"
         model_path.write_text("")
-        
+
         plan_path = tmp_path / "plans.json"
         plans = {
             "foreground_intensity_properties_per_channel": {
@@ -194,12 +191,12 @@ class TestSegmentationMain:
             }
         }
         plan_path.write_text(json.dumps(plans))
-        
+
         image_path = tmp_path / "image.nii.gz"
         image_path.write_text("")
-        
+
         output_dir = tmp_path / "output"
-        
+
         mock_argv[:] = [
             "nninfe-seg",
             "--model-path", str(model_path),
@@ -209,14 +206,14 @@ class TestSegmentationMain:
             "--overlap", "0.5",
             "--pad-value", "min"
         ]
-        
+
         mock_session = MagicMock()
         mock_session.get_inputs.return_value = [MagicMock(shape=[1, 1, 128, 128, 128])]
         mock_create.return_value = mock_session
         mock_process.return_value = str(output_dir / "image_seg.nii.gz")
-        
+
         main()
-        
+
         mock_create.assert_called_once_with(str(model_path), backend="cpu", trt_fp16=False)
         mock_process.assert_called_once()
         kwargs = mock_process.call_args.kwargs
@@ -231,7 +228,7 @@ class TestSegmentationMain:
     def test_main_build_engine_only(self, mock_argv, mock_create, tmp_path):
         model_path = tmp_path / "model.onnx"
         model_path.write_text("")
-        
+
         plan_path = tmp_path / "plans.json"
         plans = {
             "foreground_intensity_properties_per_channel": {
@@ -251,7 +248,7 @@ class TestSegmentationMain:
             }
         }
         plan_path.write_text(json.dumps(plans))
-        
+
         mock_argv[:] = [
             "nninfe-seg",
             "--model-path", str(model_path),
@@ -260,13 +257,13 @@ class TestSegmentationMain:
             "--trt-fp16",
             "--build-engine-only"
         ]
-        
+
         mock_session = MagicMock()
         mock_session.get_inputs.return_value = [MagicMock(shape=[1, 1, "batch", 64, 64])]
         mock_create.return_value = mock_session
-        
+
         main()
-        
+
         mock_create.assert_called_once_with(str(model_path), backend="trt", trt_fp16=True)
 
     @patch("sys.argv", new_callable=list)

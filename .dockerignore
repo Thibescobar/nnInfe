@@ -1,0 +1,19 @@
+# Large, machine-specific data — models/images are passed via CLI args at runtime,
+# never baked into the image (see the "data/ folder" note in the README).
+nninfe/data/
+
+# Python / build artifacts (**/ so nested dirs are matched too, not just the root)
+**/__pycache__/
+**/*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+build/
+dist/
+
+# VCS, CI and dev-only files (not needed to run the package)
+.git/
+.gitignore
+.github/
+tests/
