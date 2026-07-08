@@ -104,6 +104,12 @@ class TestWriteSegmentationDicomSeg:
         assert len(seg.SegmentSequence) == 2
         assert [s.SegmentLabel for s in seg.SegmentSequence] == ["Label 1", "Label 2"]
 
+        # Each segment gets a distinct recommended display color (else viewers show one color
+        # for every segment).
+        colors = [tuple(s.RecommendedDisplayCIELabValue) for s in seg.SegmentSequence]
+        assert all(len(c) == 3 for c in colors)
+        assert len(set(colors)) == len(colors)
+
         # Reconstruct per-segment through highdicom and check spatial fidelity.
         _, files = read_dicom_series(str(series_dir))
         src_uids = [pydicom.dcmread(f).SOPInstanceUID for f in files]

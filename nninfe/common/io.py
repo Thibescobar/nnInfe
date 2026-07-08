@@ -13,6 +13,7 @@ Spatial resampling of results into the source frame still lives in ``preprocessi
 Portable: SimpleITK + pydicom + highdicom (all cross-platform).
 """
 
+import colorsys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -184,6 +185,18 @@ def _backfill_seg_source_attributes(datasets: list) -> None:
                 setattr(ds, attr, "")
 
 
+def _segment_display_rgb(index: int) -> Tuple[int, int, int]:
+    """A distinct, deterministic display RGB (0-255) for the *index*-th segment (0-based).
+
+    Golden-ratio hue spacing keeps colors well separated even for many segments (a whole-body
+    model can have 80+), at fixed saturation/value so they stay vivid and legible. Without a
+    per-segment recommended color, viewers render every segment in one default color.
+    """
+    hue = (index * 0.6180339887498949) % 1.0
+    r, g, b = colorsys.hsv_to_rgb(hue, 0.65, 0.95)
+    return round(r * 255), round(g * 255), round(b * 255)
+
+
 def write_segmentation_dicom_seg(
     mask_ref: sitk.Image,
     source_series_dir: str,
@@ -254,6 +267,7 @@ def write_segmentation_dicom_seg(
             segmented_property_type=codes.SCT.Tissue,
             algorithm_type=hd.seg.SegmentAlgorithmTypeValues.AUTOMATIC,
             algorithm_identification=algorithm,
+            display_color=hd.color.CIELabColor.from_rgb(*_segment_display_rgb(num - 1)),
         )
         for orig, num in remap.items()
     ]
