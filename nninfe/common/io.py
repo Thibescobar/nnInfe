@@ -240,7 +240,9 @@ def write_segmentation_dicom_seg(
         raise ValueError(f"seg_encoding must be 'binary' or 'labelmap', got: {seg_encoding!r}")
 
     files = list_dicom_series_files(source_series_dir)
-    source_datasets = [pydicom.dcmread(f) for f in files]
+    # Metadata only: the SEG frames come from *mask_ref*, and highdicom never touches the
+    # source PixelData — skipping it avoids re-reading the whole series' pixels at export.
+    source_datasets = [pydicom.dcmread(f, stop_before_pixels=True) for f in files]
     _backfill_source_attributes(source_datasets)
     pixel_array, source_datasets = _seg_pixel_array_from_mask(mask_ref, source_datasets)
 
@@ -392,7 +394,9 @@ def write_detection_dicom_sr(
         boxes = boxes * np.array([s0, s1, s0, s1, s2, s2], dtype=np.float32)
 
     files = list_dicom_series_files(source_series_dir)
-    source_datasets = [pydicom.dcmread(f) for f in files]
+    # Metadata only: the SR merely *references* the source instances, so their PixelData is
+    # never needed — skipping it avoids re-reading the whole series' pixels at export.
+    source_datasets = [pydicom.dcmread(f, stop_before_pixels=True) for f in files]
     _backfill_source_attributes(source_datasets)
     slice_z = np.array([float(ds.ImagePositionPatient[2]) for ds in source_datasets])
 

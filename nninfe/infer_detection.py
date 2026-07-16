@@ -304,7 +304,7 @@ def process_single_image(
         while len(patches) < batch_size:
             patches.append(patches[-1])
 
-        input_array = np.stack([p[np.newaxis, ...] for p in patches], axis=0).astype(np.float32)
+        input_array = np.stack([p[np.newaxis, ...] for p in patches], axis=0).astype(np.float32, copy=False)
 
         raw_outputs = run_inference(session, input_array, anchors_batch)
         detections = parse_outputs(raw_outputs, batch_size)
