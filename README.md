@@ -434,7 +434,7 @@ Resampled to the **original image geometry** (spacing, origin, direction, size) 
 
 ### Output: `{name}_sr.dcm` (Detection, `--output-format dicom-sr` / `both`)
 
-A DICOM Structured Report (**TID 1500** Measurement Report, Comprehensive 3D SR) referencing the source series. One planar measurement group (**TID 1410**) per detection: a 2D POINT at the box centre placed on the nearest source slice, plus `Length` / `Width` / `Depth`, `Volume` and `Score` measurements — all with standard SCT codes. Requires DICOM **input**. `nninfe`/version is recorded as the algorithm identification for traceability. Opens in SR-aware viewers (e.g. OHIF) as findings/measurements on the study.
+A DICOM Structured Report (**TID 1500** Measurement Report, Comprehensive 3D SR) referencing the source series. One planar measurement group (**TID 1410**) per detection: a rectangle (closed 2D POLYLINE, the box's X/Y extent) placed on the source slice nearest the box centre, plus `Length` / `Width` / `Depth`, `Volume` and `Score` measurements — all with standard SCT codes. Requires DICOM **input**. `nninfe`/version is recorded as the algorithm identification for traceability. Opens in SR-aware viewers (e.g. OHIF) as findings/measurements on the study.
 
 ### Output: `{name}_seg.nii.gz` (Segmentation)
 

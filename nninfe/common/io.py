@@ -285,10 +285,46 @@ def write_segmentation_dicom_seg(
         manufacturer_model_name="nninfe",
         software_versions=__version__,
         device_serial_number=device_serial_number,
+        series_description="nnInfe segmentation SEG",
     )
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     seg.save_as(output_path)
     return output_path
+
+
+def _nest_regions_into_measurements_for_cornerstone(dataset) -> None:
+    """Relocate each planar ROI's SCOORD so Cornerstone3D/OHIF can *hydrate* the box.
+
+    highdicom emits a standards-compliant TID 1410 group: the ROI SCOORD is a direct child of the
+    measurement-group CONTAINER, a *sibling* of the measurement NUMs. Cornerstone3D's SR adapter,
+    however, only looks for the SCOORD *inside the first NUM* (``RelationshipType`` INFERRED FROM) —
+    the layout dcmjs/cornerstone writes. When the SCOORD is a sibling instead, hydration throws
+    "No spatial coordinates group found" and the box is drawn read-only but never listed.
+
+    This walks the SR content tree and, for every container holding both a top-level SCOORD and a
+    NUM, moves the SCOORD(s) into the first NUM's ContentSequence as INFERRED FROM (their nested
+    SELECTED FROM image reference is preserved). OHIF's read-only parser also accepts this nested
+    layout, so display is unaffected. Trade-off: the output becomes cornerstone-flavored (mildly
+    non-standard) rather than strict TID 1410.
+    """
+    from pydicom.sequence import Sequence
+
+    seq = getattr(dataset, "ContentSequence", None)
+    if not seq:
+        return
+    items = list(seq)
+    num_items = [it for it in items if getattr(it, "ValueType", None) == "NUM"]
+    scoord_items = [it for it in items if getattr(it, "ValueType", None) in ("SCOORD", "SCOORD3D")]
+    if num_items and scoord_items:
+        target_num = num_items[0]
+        existing = list(getattr(target_num, "ContentSequence", []) or [])
+        for sc in scoord_items:
+            sc.RelationshipType = "INFERRED FROM"
+        target_num.ContentSequence = Sequence(existing + scoord_items)
+        moved_ids = {id(sc) for sc in scoord_items}
+        dataset.ContentSequence = Sequence([it for it in items if id(it) not in moved_ids])
+    for it in dataset.ContentSequence:
+        _nest_regions_into_measurements_for_cornerstone(it)
 
 
 def write_detection_dicom_sr(
@@ -305,18 +341,31 @@ def write_detection_dicom_sr(
     finding_category=None,
     finding_type=None,
     series_number: int = 200,
+    cornerstone_compatible: bool = True,
 ) -> Optional[str]:
     """Write detections as a DICOM Structured Report (TID 1500 Measurement Report) in a
     Comprehensive 3D SR referencing the source series in *source_series_dir*.
 
-    One TID 1410 planar measurement group per detection: the location is a 2D POINT (box centre)
-    on the source slice nearest the centre, plus size measurements (Length/Width/Depth, Volume)
+    One TID 1410 planar measurement group per detection: the location is a rectangle (closed 2D
+    POLYLINE, the box's X/Y extent) on the source slice nearest the centre, plus size measurements
+    (Length/Width/Depth, Volume)
     and the detection Score — all with standard SCT codes. Requires DICOM *input* (the SR
     references source SOP instances). ``boxes_zyx`` is ``(N, 6)`` in nnDetection box order
     (see :mod:`nninfe.common.constants`); if ``current_meta`` is given, boxes are rescaled from
     that (resampled) voxel space to *ref_meta*'s (original) voxel space, matching the other
     exporters. ``finding_category`` / ``finding_type`` default to generic SCT codes (overridable).
     Returns the output path, or ``None`` if there are no detections.
+
+    ``cornerstone_compatible`` picks the flavor of the emitted SR:
+
+    - ``True`` (default): tailor the SR so OHIF/Cornerstone3D can *hydrate* each box into its
+      editable measurement panel as a RectangleROI. Two viewer-specific quirks are applied — the
+      Tracking Identifier is namespaced to the Cornerstone RectangleROI tool, and each ROI's SCOORD
+      is nested inside its first NUM (the layout Cornerstone's SR adapter expects, see
+      :func:`_nest_regions_into_measurements_for_cornerstone`). The result is mildly non-standard.
+    - ``False``: emit a strict, standards-conformant TID 1410 report (neutral tracking identifiers,
+      ROI SCOORD kept at the measurement-group level). Read cleanly by any conformant viewer/PACS,
+      but OHIF will only show it read-only (no hydration into the measurement list).
     """
     import highdicom as hd
     import pydicom
@@ -376,11 +425,27 @@ def write_detection_dicom_sr(
         size_z = float((box[D0_MAX] - box[D0_MIN]) * ref_spacing[2])
 
         nearest = int(np.argmin(np.abs(slice_z - world_z)))
+        # Rectangle (closed POLYLINE through the 4 box corners) on the centre slice. To fall back
+        # to a single centre POINT, comment this block and uncomment the POINT one below.
         region = hd.sr.ImageRegion(
-            graphic_type=hd.sr.GraphicTypeValues.POINT,
-            graphic_data=np.array([[cx, cy]], dtype=np.float32),
+            graphic_type=hd.sr.GraphicTypeValues.POLYLINE,
+            graphic_data=np.array(
+                [
+                    [box[D2_MIN], box[D1_MIN]],
+                    [box[D2_MAX], box[D1_MIN]],
+                    [box[D2_MAX], box[D1_MAX]],
+                    [box[D2_MIN], box[D1_MAX]],
+                    [box[D2_MIN], box[D1_MIN]],
+                ],
+                dtype=np.float32,
+            ),
             source_image=hd.sr.SourceImageForRegion.from_source_image(source_datasets[nearest]),
         )
+        # region = hd.sr.ImageRegion(
+        #     graphic_type=hd.sr.GraphicTypeValues.POINT,
+        #     graphic_data=np.array([[cx, cy]], dtype=np.float32),
+        #     source_image=hd.sr.SourceImageForRegion.from_source_image(source_datasets[nearest]),
+        # )
         measurements = [
             Measurement(name=codes.SCT.Length, value=size_x, unit=codes.UCUM.Millimeter),
             Measurement(name=codes.SCT.Width, value=size_y, unit=codes.UCUM.Millimeter),
@@ -393,7 +458,18 @@ def write_detection_dicom_sr(
                 referenced_region=region,
                 algorithm_id=algorithm_id,
                 measurements=measurements,
-                tracking_identifier=hd.sr.TrackingIdentifier(identifier=f"detection_{i + 1:03d}", uid=hd.UID()),
+                # In cornerstone-compatible mode the Tracking Identifier is namespaced to a known
+                # Cornerstone tool ("<CORNERSTONE_3D_TAG>:<ToolName>[:suffix]") so OHIF hydrates a
+                # closed 4/5-point POLYLINE into a RectangleROI. Otherwise a neutral identifier is
+                # used (strict TID 1410). Per-detection uniqueness comes from `uid` either way.
+                tracking_identifier=hd.sr.TrackingIdentifier(
+                    identifier=(
+                        f"Cornerstone3DTools@^0.1.0:RectangleROI:detection_{i + 1:03d}"
+                        if cornerstone_compatible
+                        else f"detection_{i + 1:03d}"
+                    ),
+                    uid=hd.UID(),
+                ),
                 finding_category=finding_category,
                 finding_type=finding_type,
             )
@@ -417,6 +493,10 @@ def write_detection_dicom_sr(
         software_versions=algorithm_version,
         series_description="nnInfe detection SR",
     )
+    # Restructure into the SCOORD-inside-NUM layout Cornerstone3D/OHIF hydration expects
+    # (see the helper's docstring). Skipped for strict TID 1410 output. Must run before save_as.
+    if cornerstone_compatible:
+        _nest_regions_into_measurements_for_cornerstone(sr)
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     sr.save_as(output_path)
     return output_path
