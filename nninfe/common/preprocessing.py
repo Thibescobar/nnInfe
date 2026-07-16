@@ -1,11 +1,12 @@
 """Image preprocessing helpers."""
 
+from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import SimpleITK as sitk
 
-from nninfe.common.io import read_image, read_image_metadata
+from nninfe.common.io import read_dicom_series, read_image, read_image_metadata
 
 
 def pad_volume_to_patch_size(
@@ -120,12 +121,19 @@ def preprocess_image(
     be mapped back to the input frame without re-reading it (key for DICOM series, which
     have no cheap header-only geometry read).
     """
-    image = read_image(image_path)
+    # For a DICOM series, keep the sorted source file list from this single read so the DICOM
+    # result writers can reference the instances without a second (costly) directory scan.
+    source_files = None
+    if Path(image_path).is_dir():
+        image, source_files = read_dicom_series(image_path)
+    else:
+        image = read_image(image_path)
     original_metadata = {
         "size_xyz": image.GetSize(),
         "spacing_xyz": image.GetSpacing(),
         "origin": image.GetOrigin(),
         "direction": image.GetDirection(),
+        "source_files": source_files,
     }
     image = sitk.Cast(image, sitk.sitkFloat32)
     if verbose:

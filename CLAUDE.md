@@ -48,7 +48,7 @@ nninfe/
 ├── common/                  # shared by both pipelines
 │   ├── cli.py               # --image-path / --image-dir resolution (NIfTI file or DICOM series dir)
 │   ├── constants.py         # box axis-index constants D0_MIN…D2_MAX
-│   ├── io.py                # image I/O hub: read NIfTI + DICOM series; write DICOM SEG (binary|labelmap); SR/SC planned
+│   ├── io.py                # image I/O hub: read NIfTI + DICOM series; write DICOM SEG (binary|labelmap) + detection SR (TID 1500)
 │   ├── preprocessing.py     # resample / clip / z-score / pad / resample-back-to-reference
 │   ├── session.py           # ORT session, BACKENDS map, in-process GPU lib preload, run/parse
 │   └── sliding_window.py    # patch positions (overlap ≥ requested) + patch extraction
@@ -75,7 +75,7 @@ tests/                       # pytest; the ONNX session is mocked (no real model
 - `common/session.py` — backend→provider mapping (`BACKENDS` dict), session creation, and `run_inference`/`parse_outputs`. **Batch size is read from the ONNX input shape** (`session.get_inputs()[0].shape[0]`), not a CLI flag.
 - `common/preprocessing.py` — `preprocess_image` chain: read → cast → `resample_image` (to plan `target_spacing`) → clip (percentiles) → z-score normalize. `resample_mask_to_reference` is the inverse used to map results back to the *original* input geometry (nearest-neighbor).
 - `common/sliding_window.py` — `compute_patch_positions` distributes patches evenly so overlap is **≥** requested and the last patch ends exactly at the boundary; `extract_patch` slices.
-- `common/io.py` — the pipeline's image I/O hub. Single `read_image` entry point makes **DICOM series directories and NIfTI files interchangeable** on input; the rest of the pipeline never knows which it got. Also the home for **DICOM result export**: `write_segmentation_dicom_seg` writes a mask as a DICOM SEG referencing the source series, either `binary` (default, max compatibility) or `labelmap` (compact for many-class masks) — further result objects (SR, Secondary Capture) are meant to be added here alongside it. `list_dicom_series_files` returns the series file list without a pixel read.
+- `common/io.py` — the pipeline's image I/O hub. Single `read_image` entry point makes **DICOM series directories and NIfTI files interchangeable** on input; the rest of the pipeline never knows which it got. Also the home for **DICOM result export**: `write_segmentation_dicom_seg` writes a mask as a DICOM SEG (`binary` default, or `labelmap` for many-class masks); `write_detection_dicom_sr` writes detections as a DICOM Structured Report (TID 1500 Measurement Report / TID 1410 planar groups, Comprehensive 3D SR). Both reference the source series, require DICOM input, and backfill missing Type-2 patient/study tags via `_backfill_source_attributes` (real/anonymized series often drop `AccessionNumber` etc., which highdicom reads without a default). Secondary Capture could join them here next. `list_dicom_series_files` returns the series file list without a pixel read.
 - `common/cli.py` — `collect_image_inputs` resolves `--image-path` (single file or one DICOM dir) vs `--image-dir` (batch; each entry is one image — NIfTI file or DICOM subdir).
 
 ### Axis conventions — the #1 source of bugs
@@ -99,7 +99,7 @@ Key design decisions (don't "fix" these — they intentionally mirror nnDetectio
 - **Gaussian weighting** (`gaussian_weight_for_boxes`) multiplies scores *only to prioritize center detections during NMS merge*. Original scores are stashed in `scores_original` and **restored before export** (`merged["scores"] = merged.pop("scores_original")`). Exported scores are always the raw model scores.
 - **NMS backend** is pluggable: `numpy` (default, dependency-free, `nms_numpy`/`_iou_3d`) or `nndet` (requires torch+nndet, for validation parity).
 - **Batch padding**: the last incomplete batch is padded by repeating the final patch; only the real patches (`actual_count`) go through post-processing.
-- **Exports** (`detection/export.py`): `_mask.nii.gz` (connected-component label map from **filled bounding boxes**, not contours), `_boxes.json` (nnDetection-compatible), `_boxes.csv` (voxel + world mm coords), optional `_boxes.pkl` (`--export-pkl`). Boxes are rescaled from resampled space back to original voxel space via `_rescale_boxes_to_ref`.
+- **Exports** (`detection/export.py`): `_boxes.json` (nnDetection-compatible) is **always** written — the canonical detection record — and `_boxes.pkl` whenever `--export-pkl`. `--output-format {json,nifti,dicom-sr,both}` (default `nifti`) then selects the renderings: `nifti` adds `_mask.nii.gz` (connected-component label map of **filled bounding boxes**, not contours) + `_boxes.csv`; `dicom-sr`/`both` (DICOM input only) adds `_sr.dcm` via `io.write_detection_dicom_sr`. Boxes are rescaled from resampled to original voxel space via `_rescale_boxes_to_ref` (the SR writer re-applies the same rescale internally, keyed on `current_meta`).
 
 ### Segmentation pipeline (`nninfe/infer_segmentation.py` + `segmentation/pipeline.py`)
 
