@@ -73,6 +73,17 @@ def _count_measurements(ds, code_value):
     return n
 
 
+def _collect_scoords(ds, out=None):
+    """Recursively collect SCOORD content items (the per-detection image regions)."""
+    if out is None:
+        out = []
+    for item in ds.get("ContentSequence", []):
+        if item.get("ValueType") == "SCOORD":
+            out.append(item)
+        _collect_scoords(item, out)
+    return out
+
+
 class TestWriteDetectionDicomSr:
     def test_roundtrip(self, tmp_path):
         series_dir = tmp_path / "series"
@@ -94,6 +105,16 @@ class TestWriteDetectionDicomSr:
         assert sr.Modality == "SR"
         # One Score measurement per detection => two measurement groups.
         assert _count_measurements(sr, SCORE_CODE) == 2
+        # Each detection is drawn as a rectangle: closed POLYLINE through the 4 box corners.
+        scoords = _collect_scoords(sr)
+        assert len(scoords) == 2
+        for item, box in zip(scoords, boxes):
+            assert item.GraphicType == "POLYLINE"
+            pts = np.asarray(item.GraphicData, np.float32).reshape(-1, 2)
+            assert len(pts) == 5
+            assert np.allclose(pts[0], pts[-1])  # closed
+            x0, y0, x1, y1 = box[4], box[1], box[5], box[3]  # (z0, y0, z1, y1, x0, x1)
+            assert np.allclose(pts.min(axis=0), [x0, y0]) and np.allclose(pts.max(axis=0), [x1, y1])
         # highdicom re-reads it (validates on parse).
         assert type(hd.sr.srread(str(out))).__name__ == "Comprehensive3DSR"
 
