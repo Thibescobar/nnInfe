@@ -14,11 +14,27 @@ Portable: SimpleITK + pydicom + highdicom (all cross-platform).
 """
 
 import colorsys
+import warnings
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import SimpleITK as sitk
+
+
+@contextmanager
+def _suppress_source_conformance_warnings():
+    """Silence two benign UserWarnings that highdicom/pydicom raise while validating attributes
+    *copied from the source series* (not values nninfe generates): a single-component PatientName
+    and an over-length VR SH value (e.g. StationName). Both are upstream data-quality quirks that
+    don't affect the validity of the output object, so they are pure noise on every export. The
+    filter is scoped to these two messages only — any other warning still surfaces.
+    """
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=r".*single component.*", category=UserWarning)
+        warnings.filterwarnings("ignore", message=r".*exceeds the maximum length.*", category=UserWarning)
+        yield
 
 # DICOM tag -> friendly key, captured for traceability and for referencing the source
 # study/series when writing DICOM results.
@@ -206,6 +222,7 @@ def write_segmentation_dicom_seg(
     series_number: int = 100,
     manufacturer: str = "nninfe",
     device_serial_number: str = "0",
+    source_files: Optional[List[str]] = None,
 ) -> Optional[str]:
     """Write *mask_ref* (an integer label map already resampled to the source geometry) as a
     DICOM Segmentation (SEG) object referencing the DICOM series in *source_series_dir*.
@@ -225,6 +242,10 @@ def write_segmentation_dicom_seg(
     - ``labelmap``: a single compact label map — size is independent of the class count and it
       matches an argmax (mutually-exclusive) mask, but it is a newer representation that older
       viewers may not read.
+
+    ``source_files`` optionally supplies the already-listed series file paths (e.g. captured by
+    the preprocessing read), skipping a second directory scan; if ``None`` the series is listed
+    from *source_series_dir*.
     """
     import highdicom as hd
     import pydicom
@@ -239,7 +260,7 @@ def write_segmentation_dicom_seg(
     if seg_type is None:
         raise ValueError(f"seg_encoding must be 'binary' or 'labelmap', got: {seg_encoding!r}")
 
-    files = list_dicom_series_files(source_series_dir)
+    files = source_files if source_files is not None else list_dicom_series_files(source_series_dir)
     # Metadata only: the SEG frames come from *mask_ref*, and highdicom never touches the
     # source PixelData — skipping it avoids re-reading the whole series' pixels at export.
     source_datasets = [pydicom.dcmread(f, stop_before_pixels=True) for f in files]
@@ -278,23 +299,24 @@ def write_segmentation_dicom_seg(
         for orig, num in remap.items()
     ]
 
-    seg = hd.seg.Segmentation(
-        source_images=source_datasets,
-        pixel_array=seg_pixels,
-        segmentation_type=seg_type,
-        segment_descriptions=segment_descriptions,
-        series_instance_uid=hd.UID(),
-        series_number=series_number,
-        sop_instance_uid=hd.UID(),
-        instance_number=1,
-        manufacturer=manufacturer,
-        manufacturer_model_name="nninfe",
-        software_versions=__version__,
-        device_serial_number=device_serial_number,
-        series_description="nnInfe segmentation SEG",
-    )
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    seg.save_as(output_path)
+    with _suppress_source_conformance_warnings():
+        seg = hd.seg.Segmentation(
+            source_images=source_datasets,
+            pixel_array=seg_pixels,
+            segmentation_type=seg_type,
+            segment_descriptions=segment_descriptions,
+            series_instance_uid=hd.UID(),
+            series_number=series_number,
+            sop_instance_uid=hd.UID(),
+            instance_number=1,
+            manufacturer=manufacturer,
+            manufacturer_model_name="nninfe",
+            software_versions=__version__,
+            device_serial_number=device_serial_number,
+            series_description="nnInfe segmentation SEG",
+        )
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        seg.save_as(output_path)
     return output_path
 
 
@@ -348,6 +370,7 @@ def write_detection_dicom_sr(
     finding_type=None,
     series_number: int = 200,
     cornerstone_compatible: bool = True,
+    source_files: Optional[List[str]] = None,
 ) -> Optional[str]:
     """Write detections as a DICOM Structured Report (TID 1500 Measurement Report) in a
     Comprehensive 3D SR referencing the source series in *source_series_dir*.
@@ -372,6 +395,10 @@ def write_detection_dicom_sr(
     - ``False``: emit a strict, standards-conformant TID 1410 report (neutral tracking identifiers,
       ROI SCOORD kept at the measurement-group level). Read cleanly by any conformant viewer/PACS,
       but OHIF will only show it read-only (no hydration into the measurement list).
+
+    ``source_files`` optionally supplies the already-listed series file paths (e.g. captured by
+    the preprocessing read), skipping a second directory scan; if ``None`` the series is listed
+    from *source_series_dir*.
     """
     import highdicom as hd
     import pydicom
@@ -397,7 +424,7 @@ def write_detection_dicom_sr(
         s0, s1, s2 = cur[2] / ref_spacing[2], cur[1] / ref_spacing[1], cur[0] / ref_spacing[0]
         boxes = boxes * np.array([s0, s1, s0, s1, s2, s2], dtype=np.float32)
 
-    files = list_dicom_series_files(source_series_dir)
+    files = source_files if source_files is not None else list_dicom_series_files(source_series_dir)
     # Metadata only: the SR merely *references* the source instances, so their PixelData is
     # never needed — skipping it avoids re-reading the whole series' pixels at export.
     source_datasets = [pydicom.dcmread(f, stop_before_pixels=True) for f in files]
@@ -489,22 +516,23 @@ def write_detection_dicom_sr(
         procedure_reported=codes.LN.CTUnspecifiedBodyRegion,
         title=codes.DCM.ImagingMeasurementReport,
     )
-    sr = hd.sr.Comprehensive3DSR(
-        evidence=source_datasets,
-        content=report,
-        series_instance_uid=hd.UID(),
-        series_number=series_number,
-        sop_instance_uid=hd.UID(),
-        instance_number=1,
-        manufacturer=manufacturer,
-        manufacturer_model_name=algorithm_name,
-        software_versions=algorithm_version,
-        series_description="nnInfe detection SR",
-    )
-    # Restructure into the SCOORD-inside-NUM layout Cornerstone3D/OHIF hydration expects
-    # (see the helper's docstring). Skipped for strict TID 1410 output. Must run before save_as.
-    if cornerstone_compatible:
-        _nest_regions_into_measurements_for_cornerstone(sr)
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    sr.save_as(output_path)
+    with _suppress_source_conformance_warnings():
+        sr = hd.sr.Comprehensive3DSR(
+            evidence=source_datasets,
+            content=report,
+            series_instance_uid=hd.UID(),
+            series_number=series_number,
+            sop_instance_uid=hd.UID(),
+            instance_number=1,
+            manufacturer=manufacturer,
+            manufacturer_model_name=algorithm_name,
+            software_versions=algorithm_version,
+            series_description="nnInfe detection SR",
+        )
+        # Restructure into the SCOORD-inside-NUM layout Cornerstone3D/OHIF hydration expects
+        # (see the helper's docstring). Skipped for strict TID 1410 output. Must run before save_as.
+        if cornerstone_compatible:
+            _nest_regions_into_measurements_for_cornerstone(sr)
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        sr.save_as(output_path)
     return output_path

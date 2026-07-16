@@ -416,6 +416,7 @@ def process_single_image(
                 orig_meta,
                 sr_path,
                 current_meta=resampled_meta,
+                source_files=orig_meta.get("source_files"),
             )
             if written:
                 print(f"      SR    -> {written}", flush=True)
