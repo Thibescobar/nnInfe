@@ -13,6 +13,7 @@ import numpy as np
 import SimpleITK as sitk
 
 from nninfe.common.cli import collect_image_inputs
+from nninfe.common.io import write_detection_dicom_sr
 from nninfe.common.preprocessing import pad_volume_to_patch_size, preprocess_image, resample_mask_to_reference
 from nninfe.common.session import BACKENDS, create_session, parse_outputs, run_inference
 from nninfe.common.sliding_window import compute_patch_positions, extract_patch
@@ -92,6 +93,14 @@ def main() -> None:
         action="store_true",
         help="Also export detections as .pkl (nnDetection-compatible, for validation)",
     )
+    parser.add_argument(
+        "--output-format",
+        choices=["json", "nifti", "dicom-sr", "both"],
+        default="nifti",
+        help="Result format; the boxes JSON is always written (and PKL if --export-pkl). "
+        "json = JSON only; nifti (default) adds the mask NIfTI + CSV; dicom-sr adds a DICOM "
+        "Structured Report (requires DICOM input); both = nifti + dicom-sr",
+    )
 
     args = parser.parse_args()
 
@@ -118,6 +127,11 @@ def main() -> None:
         sys.exit(f"Error: --overlap must be in [0, 1), got: {args.overlap}")
     if not 0.0 <= args.score_thresh <= 1.0:
         sys.exit(f"Error: --score-thresh must be in [0, 1], got: {args.score_thresh}")
+    if args.output_format in ("dicom-sr", "both") and args.image_path and not Path(args.image_path).is_dir():
+        sys.exit(
+            "Error: --output-format dicom-sr/both requires DICOM input (a series directory); "
+            f"--image-path is not a directory: {args.image_path}"
+        )
 
     defaults = {a.dest: a.default for a in parser._actions if a.default is not argparse.SUPPRESS}
     print("Parameters:", flush=True)
@@ -203,6 +217,7 @@ def main() -> None:
             no_global_nms=args.no_global_nms,
             export_pkl=args.export_pkl,
             pad_value=args.pad_value,
+            output_format=args.output_format,
         )
         summary.append((image_name, result))
 
@@ -231,8 +246,15 @@ def process_single_image(
     no_global_nms: bool,
     export_pkl: bool,
     pad_value: str,
+    output_format: str = "nifti",
 ) -> int:
-    """Process a single image through the full pipeline. Returns detection count."""
+    """Process a single image through the full pipeline. Returns detection count.
+
+    The ``_boxes.json`` detection record is always written (and ``_boxes.pkl`` whenever
+    ``export_pkl``). ``output_format`` then selects the rest: ``json`` (nothing further),
+    ``nifti`` (default: adds the NIfTI mask + CSV), ``dicom-sr`` (adds a DICOM SR referencing the
+    source series — DICOM input only), or ``both`` (nifti + dicom-sr).
+    """
     image_name = Path(image_path).name
     if image_name.endswith(".nii.gz"):
         image_name = image_name[:-7]
@@ -282,7 +304,7 @@ def process_single_image(
         while len(patches) < batch_size:
             patches.append(patches[-1])
 
-        input_array = np.stack([p[np.newaxis, ...] for p in patches], axis=0).astype(np.float32)
+        input_array = np.stack([p[np.newaxis, ...] for p in patches], axis=0).astype(np.float32, copy=False)
 
         raw_outputs = run_inference(session, input_array, anchors_batch)
         detections = parse_outputs(raw_outputs, batch_size)
@@ -348,37 +370,64 @@ def process_single_image(
     t0 = time.time()
     os.makedirs(output_dir, exist_ok=True)
 
-    mask_path = str(output_dir / f"{image_name}_mask.nii.gz")
-    cc = detections_to_mask(merged, original_shape, preprocessed)
-    cc = resample_mask_to_reference(cc, orig_meta)
-    sitk.WriteImage(cc, mask_path)
-    print(f"      mask  -> {mask_path}", flush=True)
-
-    json_path = str(output_dir / f"{image_name}_boxes.json")
-
     resampled_meta = {
         "size_xyz": preprocessed.GetSize(),
         "spacing_xyz": preprocessed.GetSpacing(),
         "origin": preprocessed.GetOrigin(),
         "direction": preprocessed.GetDirection(),
     }
+
+    # The JSON detection record is always written, regardless of --output-format; the PKL is
+    # written whenever explicitly requested (both are box records, independent of the rendering).
+    json_path = str(output_dir / f"{image_name}_boxes.json")
     export_detections_json(merged, json_path, ref_meta=orig_meta, current_meta=resampled_meta)
     print(f"      boxes -> {json_path}", flush=True)
-
-    csv_path = str(output_dir / f"{image_name}_boxes.csv")
-    export_detections_csv(
-        merged,
-        csv_path,
-        image_name=image_name,
-        ref_meta=orig_meta,
-        current_meta=resampled_meta,
-    )
-    print(f"      csv   -> {csv_path}", flush=True)
 
     if export_pkl:
         pkl_path = str(output_dir / f"{image_name}_boxes.pkl")
         export_detections_pkl(merged, pkl_path, ref_meta=orig_meta, current_meta=resampled_meta)
         print(f"      pkl   -> {pkl_path}", flush=True)
+
+    if output_format in ("nifti", "both"):
+        mask_path = str(output_dir / f"{image_name}_mask.nii.gz")
+        cc = detections_to_mask(merged, original_shape, preprocessed)
+        cc = resample_mask_to_reference(cc, orig_meta)
+        sitk.WriteImage(cc, mask_path)
+        print(f"      mask  -> {mask_path}", flush=True)
+
+        csv_path = str(output_dir / f"{image_name}_boxes.csv")
+        export_detections_csv(
+            merged,
+            csv_path,
+            image_name=image_name,
+            ref_meta=orig_meta,
+            current_meta=resampled_meta,
+        )
+        print(f"      csv   -> {csv_path}", flush=True)
+
+    if output_format in ("dicom-sr", "both"):
+        if Path(image_path).is_dir():
+            sr_path = str(output_dir / f"{image_name}_sr.dcm")
+            written = write_detection_dicom_sr(
+                merged["boxes"],
+                merged["scores"],
+                merged["labels"],
+                image_path,
+                orig_meta,
+                sr_path,
+                current_meta=resampled_meta,
+                source_files=orig_meta.get("source_files"),
+            )
+            if written:
+                print(f"      SR    -> {written}", flush=True)
+            else:
+                print("      SR    -> skipped (no detections)", flush=True)
+        else:
+            print(
+                f"      SR    -> skipped ('{image_name}' is not a DICOM series; "
+                "DICOM SR output requires DICOM input)",
+                flush=True,
+            )
 
     print(f"      exports done  ({time.time() - t0:.2f}s)", flush=True)
 

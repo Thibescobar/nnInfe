@@ -107,7 +107,7 @@ def _run_segmentation_batch(
     patches: List[np.ndarray],
 ) -> np.ndarray:
     """Run one segmentation batch and return logits as (B, C, Z, Y, X)."""
-    input_array = np.stack([p[np.newaxis, ...] for p in patches], axis=0).astype(np.float32)
+    input_array = np.stack([p[np.newaxis, ...] for p in patches], axis=0).astype(np.float32, copy=False)
     outputs = session.run(None, {input_name: input_array})
     if not outputs:
         raise RuntimeError("Segmentation model returned no outputs.")
@@ -122,8 +122,17 @@ def run_sliding_window_segmentation(
     overlap: float,
     verbose: bool = False,
     progress_every: int = 3,
+    average_logits: bool = False,
 ) -> np.ndarray:
-    """Run segmentation over volume and return label map in preprocessed space (ZYX)."""
+    """Run segmentation over volume and return label map in preprocessed space (ZYX).
+
+    ``average_logits`` controls whether the accumulated logits are divided by the accumulated
+    gaussian weights before the argmax. The label map is identical either way (the weights are
+    shared by all classes at each voxel, and dividing by a shared positive value never changes
+    the argmax), so it defaults to ``False`` — skipping a full-volume weight buffer and a
+    ``(C, Z, Y, X)`` division. Set it to ``True`` if properly averaged logits/probabilities are
+    ever needed (e.g. a probability-map export).
+    """
     image_shape = tuple(int(v) for v in volume_zyx.shape)
     positions, step_sizes = compute_patch_positions(image_shape, patch_size_zyx, overlap)
     if not positions:
@@ -151,7 +160,7 @@ def run_sliding_window_segmentation(
     gaussian = _gaussian_importance_map(patch_size_zyx)
 
     logits_acc = None
-    weight_acc = np.zeros(image_shape, dtype=np.float32)
+    weight_acc = np.zeros(image_shape, dtype=np.float32) if average_logits else None
 
     t0 = time.time()
     progress_every = max(int(progress_every), 1)
@@ -169,7 +178,8 @@ def run_sliding_window_segmentation(
             logits_acc[:, z : z + patch_size_zyx[0], y : y + patch_size_zyx[1], x : x + patch_size_zyx[2]] += (
                 logits_batch[i] * gaussian
             )
-            weight_acc[z : z + patch_size_zyx[0], y : y + patch_size_zyx[1], x : x + patch_size_zyx[2]] += gaussian
+            if average_logits:
+                weight_acc[z : z + patch_size_zyx[0], y : y + patch_size_zyx[1], x : x + patch_size_zyx[2]] += gaussian
 
         if verbose and (batch_idx % progress_every == 0 or batch_idx == n_batches - 1):
             progress = (batch_idx + 1) / n_batches
@@ -189,7 +199,8 @@ def run_sliding_window_segmentation(
     if logits_acc is None:
         raise RuntimeError("Segmentation reconstruction failed: no logits accumulated.")
 
-    logits_acc = logits_acc / np.maximum(weight_acc[None, ...], 1e-6)
+    if average_logits:
+        logits_acc = logits_acc / np.maximum(weight_acc[None, ...], 1e-6)
     label_map = np.argmax(logits_acc, axis=0).astype(np.uint16)
 
     if verbose:

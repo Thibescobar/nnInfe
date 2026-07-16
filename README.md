@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/python-≥3.10-blue)
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
 ![CI](https://img.shields.io/badge/CI-GitHub%20Actions-blue)
-![Tests](https://img.shields.io/badge/tests-143%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-152%20passed-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-94%25-brightgreen)
 ![Linting](https://img.shields.io/badge/linting-ruff-purple)
 
@@ -221,6 +221,7 @@ nninfe-seg \
 |----------|-------------|
 | `--output-dir` | Output directory. |
 | `--export-pkl` | Also export `{name}_boxes.pkl` for detection (nnDetection-compatible, for validation with `nndet_boxes2nii`). |
+| `--output-format` | Result format (DICOM options require DICOM input). Detection: the `_boxes.json` record is always written (plus `_boxes.pkl` with `--export-pkl`); the value adds the rest — `json` (nothing more), `nifti` (default: mask + CSV), `dicom-sr` (DICOM SR), `both`. Segmentation: `nifti` / `dicom-seg` / `both` (see [`nninfe-seg` options](#nninfe-seg-options)). |
 
 ### Sliding Window
 
@@ -431,6 +432,10 @@ Resampled to the **original image geometry** (spacing, origin, direction, size) 
 
 >This mask corresponds to boxes, not to segmentation contours.
 
+### Output: `{name}_sr.dcm` (Detection, `--output-format dicom-sr` / `both`)
+
+A DICOM Structured Report (**TID 1500** Measurement Report, Comprehensive 3D SR) referencing the source series. One planar measurement group (**TID 1410**) per detection: a rectangle (closed 2D POLYLINE, the box's X/Y extent) placed on the source slice nearest the box centre, plus `Length` / `Width` / `Depth`, `Volume` and `Score` measurements — all with standard SCT codes. Requires DICOM **input**. `nninfe`/version is recorded as the algorithm identification for traceability. Opens in SR-aware viewers (e.g. OHIF) as findings/measurements on the study.
+
 ### Output: `{name}_seg.nii.gz` (Segmentation)
 
 A voxel-level label map where integer values represent semantic classes as defined in standard nnUNet exports. Re-sampled natively back to the input reference image's spacing and geometry.
@@ -496,7 +501,7 @@ All backends produce **26 detections** — results are consistent across backend
 ## Limitations & Known Issues
 
 - **Multiple classes for detection**: Detection currently exposes class output natively mapped (label 0, etc). Multi-class might require specific per-class NMS tracking in nnDetection pipelines if custom configuration differs.
-- **DICOM output (partial)**: DICOM **input** is supported for both pipelines — a series directory is read directly (see [CLI Reference](#cli-reference)). **Segmentation** can now also write results as a DICOM Segmentation (SEG) object referencing the source series (`nninfe-seg --output-format dicom-seg`, requires DICOM input). **Detection** results are still written as NIfTI/JSON/CSV only; a DICOM output for detections (SEG or Structured Report) is planned.
+- **DICOM output**: DICOM **input** is supported for both pipelines — a series directory is read directly (see [CLI Reference](#cli-reference)). **Segmentation** can write a DICOM Segmentation (SEG) referencing the source series (`nninfe-seg --output-format dicom-seg`); **detection** can write a DICOM Structured Report (TID 1500 Measurement Report, `nninfe-det --output-format dicom-sr`). Both require DICOM input (they reference the source instances). Remaining gap: a DICOM SEG of the *detection* boxes (detection currently emits the SR plus the NIfTI box mask).
 - **Mask is bounding-box based for detection**: While the native nnDetection framework give the possibility to output segmentation contours for some detected objects (not all), the output mask for the present detection pipeline (`_mask.nii.gz`) fills bounding boxes. Pixel-level contours is reserved for the segmentation pipeline for the moment. Could be patched if there are needs.
 - **Single fold**: Uses one fold only. Multi-fold ensemble was intentionally deferred for industrialization simplicity and speed across both detection and segmentation.
 - **Structured logging**: Currently all output is `print()`. Production should use Python `logging` with levels (DEBUG/INFO/WARNING).
