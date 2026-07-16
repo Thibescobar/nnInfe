@@ -125,7 +125,10 @@ def process_single_image(
     if output_format in ("dicom-seg", "both"):
         if Path(image_path).is_dir():
             out_dcm = str(output_dir / f"{image_name}_seg.dcm")
-            written = write_segmentation_dicom_seg(mask_ref, image_path, out_dcm, seg_encoding=seg_encoding)
+            written = write_segmentation_dicom_seg(
+                mask_ref, image_path, out_dcm, seg_encoding=seg_encoding,
+                source_files=orig_meta.get("source_files"),
+            )
             if written:
                 outputs.append(written)
                 print(f"      SEG   -> {written}", flush=True)
