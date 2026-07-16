@@ -73,6 +73,27 @@ def test_run_sliding_window_segmentation_binary_shape():
     assert labels.max() == 1
 
 
+def test_run_sliding_window_segmentation_average_logits_invariant():
+    """The label map is identical with and without the logit averaging: the accumulated
+    weights are shared by all classes at each voxel, so dividing never changes the argmax."""
+    volume = np.zeros((6, 6, 6), dtype=np.float32)
+    patch_size = (4, 4, 4)
+
+    rng = np.random.default_rng(42)
+    logits = rng.normal(size=(2, 3, 4, 4, 4)).astype(np.float32)
+
+    def make_session():
+        session = MagicMock()
+        session.get_inputs.return_value = [MagicMock(name="images", shape=[2, 1, 4, 4, 4])]
+        session.run.return_value = [logits]
+        return session
+
+    kwargs = dict(volume_zyx=volume, patch_size_zyx=patch_size, batch_size=2, overlap=0.5)
+    labels_raw = run_sliding_window_segmentation(session=make_session(), average_logits=False, **kwargs)
+    labels_avg = run_sliding_window_segmentation(session=make_session(), average_logits=True, **kwargs)
+    np.testing.assert_array_equal(labels_raw, labels_avg)
+
+
 def test_process_single_image_exports_mask(tmp_path):
     nifti_path = _make_nifti(tmp_path, shape=(8, 8, 8))
     output_dir = tmp_path / "out"
