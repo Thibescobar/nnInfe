@@ -249,9 +249,13 @@ def write_segmentation_dicom_seg(
         return None
 
     remap = {orig: i + 1 for i, orig in enumerate(present)}
-    seg_pixels = np.zeros(pixel_array.shape, dtype=np.uint8)
+    # Remap sparse labels -> contiguous 1..N in a single gather via a lookup table, instead of
+    # one full-volume boolean pass per label (which is O(#labels x voxels) -- seconds on a large
+    # many-class mask like a whole-body model).
+    lut = np.zeros(int(pixel_array.max()) + 1, dtype=np.uint8)
     for orig, num in remap.items():
-        seg_pixels[pixel_array == orig] = num
+        lut[orig] = num
+    seg_pixels = lut[pixel_array]
 
     labels = segment_labels or {}
     algorithm = hd.AlgorithmIdentificationSequence(
