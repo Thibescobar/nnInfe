@@ -206,6 +206,7 @@ def write_segmentation_dicom_seg(
     series_number: int = 100,
     manufacturer: str = "nninfe",
     device_serial_number: str = "0",
+    source_files: Optional[List[str]] = None,
 ) -> Optional[str]:
     """Write *mask_ref* (an integer label map already resampled to the source geometry) as a
     DICOM Segmentation (SEG) object referencing the DICOM series in *source_series_dir*.
@@ -225,6 +226,10 @@ def write_segmentation_dicom_seg(
     - ``labelmap``: a single compact label map — size is independent of the class count and it
       matches an argmax (mutually-exclusive) mask, but it is a newer representation that older
       viewers may not read.
+
+    ``source_files`` optionally supplies the already-listed series file paths (e.g. captured by
+    the preprocessing read), skipping a second directory scan; if ``None`` the series is listed
+    from *source_series_dir*.
     """
     import highdicom as hd
     import pydicom
@@ -239,7 +244,7 @@ def write_segmentation_dicom_seg(
     if seg_type is None:
         raise ValueError(f"seg_encoding must be 'binary' or 'labelmap', got: {seg_encoding!r}")
 
-    files = list_dicom_series_files(source_series_dir)
+    files = source_files if source_files is not None else list_dicom_series_files(source_series_dir)
     # Metadata only: the SEG frames come from *mask_ref*, and highdicom never touches the
     # source PixelData — skipping it avoids re-reading the whole series' pixels at export.
     source_datasets = [pydicom.dcmread(f, stop_before_pixels=True) for f in files]
@@ -348,6 +353,7 @@ def write_detection_dicom_sr(
     finding_type=None,
     series_number: int = 200,
     cornerstone_compatible: bool = True,
+    source_files: Optional[List[str]] = None,
 ) -> Optional[str]:
     """Write detections as a DICOM Structured Report (TID 1500 Measurement Report) in a
     Comprehensive 3D SR referencing the source series in *source_series_dir*.
@@ -372,6 +378,10 @@ def write_detection_dicom_sr(
     - ``False``: emit a strict, standards-conformant TID 1410 report (neutral tracking identifiers,
       ROI SCOORD kept at the measurement-group level). Read cleanly by any conformant viewer/PACS,
       but OHIF will only show it read-only (no hydration into the measurement list).
+
+    ``source_files`` optionally supplies the already-listed series file paths (e.g. captured by
+    the preprocessing read), skipping a second directory scan; if ``None`` the series is listed
+    from *source_series_dir*.
     """
     import highdicom as hd
     import pydicom
@@ -397,7 +407,7 @@ def write_detection_dicom_sr(
         s0, s1, s2 = cur[2] / ref_spacing[2], cur[1] / ref_spacing[1], cur[0] / ref_spacing[0]
         boxes = boxes * np.array([s0, s1, s0, s1, s2, s2], dtype=np.float32)
 
-    files = list_dicom_series_files(source_series_dir)
+    files = source_files if source_files is not None else list_dicom_series_files(source_series_dir)
     # Metadata only: the SR merely *references* the source instances, so their PixelData is
     # never needed — skipping it avoids re-reading the whole series' pixels at export.
     source_datasets = [pydicom.dcmread(f, stop_before_pixels=True) for f in files]
