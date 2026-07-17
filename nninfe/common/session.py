@@ -1,6 +1,7 @@
 """ONNX Runtime session helpers."""
 
 import ctypes
+import logging
 import os
 import sys
 import sysconfig
@@ -11,6 +12,8 @@ import numpy as np
 import onnxruntime as ort
 
 from nninfe.common.errors import InferenceError, SessionError
+
+logger = logging.getLogger(__name__)
 
 
 def _ort_exception_types() -> tuple:
@@ -128,7 +131,7 @@ def create_session(
         # message stays sober (backend only, no raw cause) — the cause is chained for the logs.
         raise SessionError(f"failed to create ONNX Runtime session (backend={backend})") from exc
     actual = session.get_providers()
-    print(f"      ONNX Runtime providers: {actual}\n", flush=True)
+    logger.info(f"      ONNX Runtime providers: {actual}\n")
     return session
 
 

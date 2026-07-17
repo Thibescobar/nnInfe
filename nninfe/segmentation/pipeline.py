@@ -1,5 +1,6 @@
 """Segmentation inference helpers built on shared pipeline primitives."""
 
+import logging
 import math
 import time
 from pathlib import Path
@@ -11,6 +12,8 @@ import SimpleITK as sitk
 from nninfe.common.errors import InferenceError
 from nninfe.common.session import _ORT_EXCEPTIONS
 from nninfe.common.sliding_window import compute_patch_positions, extract_patch
+
+logger = logging.getLogger(__name__)
 
 
 def flip_image_axes(image: sitk.Image, flip_x: bool, flip_y: bool, flip_z: bool) -> sitk.Image:
@@ -153,14 +156,12 @@ def run_sliding_window_segmentation(
             round(1.0 - s / p, 4) if p > 0 else 0.0
             for s, p in zip(step_sizes, patch_size_zyx)
         )
-        print(
+        logger.info(
             f"      step sizes (ZYX): ({step_sizes[0]:.1f}, {step_sizes[1]:.1f}, {step_sizes[2]:.1f})  "
-            f"actual overlap: {actual_overlap}  (requested: {overlap})",
-            flush=True,
+            f"actual overlap: {actual_overlap}  (requested: {overlap})"
         )
-        print(
-            f"      {n_patches} patches, {n_batches} batches (batch_size={batch_size})",
-            flush=True,
+        logger.info(
+            f"      {n_patches} patches, {n_batches} batches (batch_size={batch_size})"
         )
 
     input_name = session.get_inputs()[0].name
@@ -194,13 +195,12 @@ def run_sliding_window_segmentation(
             time_per_iter = elapsed / (batch_idx + 1)
             remaining = time_per_iter * (n_batches - batch_idx - 1)
             end_patch = min(start + batch_size, n_patches)
-            print(
+            logger.info(
                 f"            progress {progress:6.1%}  "
                 f"batch {batch_idx + 1}/{n_batches}  "
                 f"patch {end_patch}/{n_patches}  "
                 f"{time_per_iter:.2f}s/batch  "
-                f"elapsed {elapsed:.0f}s  remaining {remaining:.0f}s",
-                flush=True,
+                f"elapsed {elapsed:.0f}s  remaining {remaining:.0f}s"
             )
 
     if logits_acc is None:
@@ -211,7 +211,7 @@ def run_sliding_window_segmentation(
     label_map = np.argmax(logits_acc, axis=0).astype(np.uint16)
 
     if verbose:
-        print(f"      inference done ({time.time() - t0:.2f}s)", flush=True)
+        logger.info(f"      inference done ({time.time() - t0:.2f}s)")
 
     return label_map
 
