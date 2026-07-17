@@ -8,6 +8,7 @@ import numpy as np
 import SimpleITK as sitk
 
 from nninfe.common.io import read_dicom_series, read_image, read_image_metadata
+from nninfe.common.validation import validate_input_image
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +132,7 @@ def preprocess_image(
         image, source_files = read_dicom_series(image_path)
     else:
         image = read_image(image_path)
+    validate_input_image(image)  # cheap O(1) geometry guard before any processing
     original_metadata = {
         "size_xyz": image.GetSize(),
         "spacing_xyz": image.GetSpacing(),

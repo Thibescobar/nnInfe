@@ -18,6 +18,7 @@ Exit-code contract (stable — external orchestration depends on it):
  5       image I/O: reading/preprocessing an input image failed
  6       export: writing a result file failed
  7       partial: batch finished but at least one image failed
+ 8       input: an input image failed validation (bad geometry/shape)
 ======  ============================================================
 """
 
@@ -33,6 +34,7 @@ EXIT_INFERENCE = 4
 EXIT_IMAGE_IO = 5
 EXIT_EXPORT = 6
 EXIT_PARTIAL = 7
+EXIT_INPUT = 8
 
 
 class NnInfeError(Exception):
@@ -58,6 +60,14 @@ class ImageIOError(NnInfeError):
     """Reading or preprocessing an input image failed (unreadable file, bad geometry)."""
 
     exit_code = EXIT_IMAGE_IO
+
+
+class InputValidationError(NnInfeError):
+    """An input image was read but is unusable by the pipeline (not 3D, multi-channel,
+    non-positive spacing, empty). Distinct from ImageIOError: the file read fine, its content
+    is invalid — not retryable, the caller must fix the input."""
+
+    exit_code = EXIT_INPUT
 
 
 class ExportError(NnInfeError):
