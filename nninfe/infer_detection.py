@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import logging
 import math
 import os
 import sys
@@ -27,6 +28,8 @@ from nninfe.common.errors import (
     write_image_status,
 )
 from nninfe.common.io import write_detection_dicom_sr
+from nninfe.common.logging_setup import configure_logging
+from nninfe.common.manifest import build_run_context, classify_error, write_run_manifest
 from nninfe.common.preprocessing import pad_volume_to_patch_size, preprocess_image, resample_mask_to_reference
 from nninfe.common.session import BACKENDS, create_session, parse_outputs, run_inference
 from nninfe.common.sliding_window import compute_patch_positions, extract_patch
@@ -52,8 +55,11 @@ from nninfe.detection.postprocessing import (
 _READ_ERRORS = (OSError, RuntimeError, ValueError)
 _EXPORT_ERRORS = (OSError, RuntimeError, ValueError, InvalidDicomError)
 
+logger = logging.getLogger(__name__)
+
 
 def main() -> None:
+    configure_logging()
     parser = argparse.ArgumentParser(
         description="nnDet ONNX inference pipeline (sliding window)",
     )
@@ -153,7 +159,7 @@ def main() -> None:
         )
 
     defaults = {a.dest: a.default for a in parser._actions if a.default is not argparse.SUPPRESS}
-    print("Parameters:", flush=True)
+    logger.info("Parameters:")
     for name, value in vars(args).items():
         tag = ""
         if name in defaults and value == defaults[name]:
@@ -161,12 +167,12 @@ def main() -> None:
                 tag = "  (auto: from plan)"
             else:
                 tag = "  (default)"
-        print(f"  --{name.replace('_', '-')} : {value}{tag}", flush=True)
-    print(flush=True)
+        logger.info(f"  --{name.replace('_', '-')} : {value}{tag}")
+    logger.info("")
 
     with open(args.plan_path, "r") as f:
         plan_inference = json.load(f)
-    print(f"      config loaded from: {args.plan_path}", flush=True)
+    logger.info(f"      config loaded from: {args.plan_path}")
 
     patch_size = tuple(plan_inference["patch_size"])
 
@@ -175,12 +181,11 @@ def main() -> None:
         cache_dir = Path(args.model_path).parent / f"trt_engine_cache_{precision}"
         has_cache = cache_dir.exists() and any(cache_dir.glob("*.engine"))
         if has_cache:
-            print(f"      Loading TensorRT session ({precision}, cached engines from {cache_dir}) ...", flush=True)
+            logger.info(f"      Loading TensorRT session ({precision}, cached engines from {cache_dir}) ...")
         else:
-            print(
+            logger.info(
                 "      Creating TensorRT session "
-                f"({precision}, no cache found, compiling engines -- this may take several minutes) ...",
-                flush=True,
+                f"({precision}, no cache found, compiling engines -- this may take several minutes) ..."
             )
 
     t_session = time.time()
@@ -188,27 +193,42 @@ def main() -> None:
         session = create_session(args.model_path, args.backend, args.trt_fp16)
     except SessionError as exc:
         # Fatal: without a session no image can be processed (bad model, driver/engine mismatch).
-        print(f"FATAL: {exc}", file=sys.stderr, flush=True)
+        logger.error(f"FATAL: {exc}")
         sys.exit(exc.exit_code)
     batch_size: int = session.get_inputs()[0].shape[0]
-    print(f"      Session ready  ({time.time() - t_session:.2f}s)", flush=True)
+    logger.info(f"      Session ready  ({time.time() - t_session:.2f}s)")
 
     if args.build_engine_only:
-        print("\nEngine built and cached. Exiting.", flush=True)
+        logger.info("\nEngine built and cached. Exiting.")
         return
 
     iou_threshold = args.iou_threshold
     if iou_threshold is None:
         iou_threshold = plan_inference["inference_plan"]["model_iou"]
-        print(f"      iou-threshold not specified, using plan value: {iou_threshold}\n", flush=True)
+        logger.info(f"      iou-threshold not specified, using plan value: {iou_threshold}\n")
 
-    print("[1/5] Computing anchors ...", flush=True)
+    logger.info("[1/5] Computing anchors ...")
     t0 = time.time()
     anchors_batch = compute_anchors(plan_inference, patch_size, batch_size)
-    print(f"      anchors shape: {anchors_batch.shape}  ({time.time() - t0:.2f}s)", flush=True)
+    logger.info(f"      anchors shape: {anchors_batch.shape}  ({time.time() - t0:.2f}s)")
 
     if args.image_dir:
-        print(f"\n      Found {len(image_paths)} images in {args.image_dir}\n", flush=True)
+        logger.info(f"\n      Found {len(image_paths)} images in {args.image_dir}\n")
+
+    # Run-level manifest context, built once (model/plan hashed a single time for the whole batch).
+    run_context = build_run_context(
+        pipeline="detection",
+        model_path=args.model_path,
+        plan_path=args.plan_path,
+        backend=args.backend,
+        providers=session.get_providers(),
+        params={
+            "overlap": args.overlap, "score_thresh": args.score_thresh, "min_size_mm": args.min_size_mm,
+            "iou_threshold": iou_threshold, "nms_backend": args.nms_backend,
+            "no_global_nms": args.no_global_nms, "pad_value": args.pad_value,
+            "output_format": args.output_format, "export_pkl": args.export_pkl,
+        },
+    )
 
     t_total = time.time()
     summary = []
@@ -223,14 +243,15 @@ def main() -> None:
             image_name = image_name[:-4]
 
         if len(image_paths) > 1:
-            print(f"\n{'='*60}", flush=True)
-            print(f"  Image {img_idx + 1}/{len(image_paths)}: {img_path.name}", flush=True)
-            print(f"{'='*60}", flush=True)
+            logger.info(f"\n{'='*60}")
+            logger.info(f"  Image {img_idx + 1}/{len(image_paths)}: {img_path.name}")
+            logger.info(f"{'='*60}")
 
         # Per-image fault isolation: a failing image never discards the others' results. Expected
         # (typed) failures are marked and the batch stays "partial"; an unexpected error is a bug —
         # it is logged loudly with a full traceback and forces EXIT_RUNTIME so it is never mistaken
         # for a benign per-image failure (policy (a)).
+        t_img = time.time()
         try:
             result = process_single_image(
                 session=session,
@@ -251,34 +272,38 @@ def main() -> None:
                 output_format=args.output_format,
             )
             summary.append((image_name, result))
+            write_run_manifest(args.output_dir, image_name, run_context, "ok", duration_s=time.time() - t_img)
         except NnInfeError as exc:
             kind = type(exc).__name__
             # Sober, non-PHI detail (typed name + stable message; the cause is chained for logs).
-            print(f"  ERROR [{image_name}]: {kind}: {exc}", file=sys.stderr, flush=True)
+            logger.error(f"  ERROR [{image_name}]: {kind}: {exc}")
             write_image_status(args.output_dir, image_name, ok=False, detail=f"{kind}: {exc}")
+            write_run_manifest(args.output_dir, image_name, run_context, "failed",
+                               duration_s=time.time() - t_img, error=classify_error(exc))
             summary.append((image_name, None))
             operational_failures.append((image_name, exc))
-        except Exception:
-            print(f"  INTERNAL ERROR [{image_name}] — this is a bug, not an operational failure:",
-                  file=sys.stderr, flush=True)
+        except Exception as exc:
+            logger.error(f"  INTERNAL ERROR [{image_name}] — this is a bug, not an operational failure:")
             traceback.print_exc()
             write_image_status(args.output_dir, image_name, ok=False, detail=f"InternalError: {image_name}")
+            write_run_manifest(args.output_dir, image_name, run_context, "failed",
+                               duration_s=time.time() - t_img, error=classify_error(exc))
             summary.append((image_name, None))
             bug_failures.append(image_name)
 
     n_failed = len(operational_failures) + len(bug_failures)
     if len(image_paths) > 1:
-        print(f"\n{'='*60}", flush=True)
-        print(f"  Summary: {len(image_paths)} images, {n_failed} failed", flush=True)
+        logger.info(f"\n{'='*60}")
+        logger.info(f"  Summary: {len(image_paths)} images, {n_failed} failed")
         for name, n_det in summary:
             status = "FAILED" if n_det is None else f"{n_det} detections"
-            print(f"    {name}: {status}", flush=True)
+            logger.info(f"    {name}: {status}")
 
     # Batch-complete marker (kept for backward-compatible orchestration: now means "run
     # finished", while {name}.done / {name}.failed carry each image's actual outcome).
     Path(args.output_dir, ".done").write_text("done")
 
-    print(f"\nDone. Total time: {time.time() - t_total:.2f}s", flush=True)
+    logger.info(f"\nDone. Total time: {time.time() - t_total:.2f}s")
 
     if bug_failures:
         # A programming bug occurred: never mask it behind the benign "partial" code.
@@ -321,36 +346,34 @@ def process_single_image(
     elif image_name.endswith(".nii"):
         image_name = image_name[:-4]
 
-    print("[2/5] Preprocessing image ...", flush=True)
+    logger.info("[2/5] Preprocessing image ...")
     t0 = time.time()
     with translate_errors(ImageIOError, _READ_ERRORS, "failed to read or preprocess input image"):
         preprocessed, orig_meta = preprocess_image(image_path, plan_inference)
         volume = sitk.GetArrayFromImage(preprocessed)
     spacing_xyz = preprocessed.GetSpacing()
-    print(f"      preprocessing done  ({time.time() - t0:.2f}s)", flush=True)
+    logger.info(f"      preprocessing done  ({time.time() - t0:.2f}s)")
 
     volume_padded, original_shape = pad_volume_to_patch_size(volume, patch_size, pad_value=pad_value)
     if volume_padded.shape != original_shape:
-        print(
-            f"      padded volume for inference: {original_shape} -> {volume_padded.shape}",
-            flush=True,
+        logger.info(
+            f"      padded volume for inference: {original_shape} -> {volume_padded.shape}"
         )
     padded_shape = volume_padded.shape
 
-    print("[3/5] Building sliding window positions ...", flush=True)
+    logger.info("[3/5] Building sliding window positions ...")
     t0 = time.time()
     positions, step_sizes = compute_patch_positions(padded_shape, patch_size, overlap)
     actual_overlap = tuple(round(1.0 - s / p, 4) if p > 0 else 0.0 for s, p in zip(step_sizes, patch_size))
     n_patches = len(positions)
     n_batches = math.ceil(n_patches / batch_size)
-    print(
+    logger.info(
         f"      step sizes (ZYX): ({step_sizes[0]:.1f}, {step_sizes[1]:.1f}, {step_sizes[2]:.1f})  "
-        f"actual overlap: {actual_overlap}  (requested: {overlap})",
-        flush=True,
+        f"actual overlap: {actual_overlap}  (requested: {overlap})"
     )
-    print(f"      {n_patches} patches, {n_batches} batches (batch_size={batch_size})  ({time.time() - t0:.2f}s)", flush=True)
+    logger.info(f"      {n_patches} patches, {n_batches} batches (batch_size={batch_size})  ({time.time() - t0:.2f}s)")
 
-    print("[4/5] Running inference ...", flush=True)
+    logger.info("[4/5] Running inference ...")
     t0 = time.time()
 
     all_detections: List[Dict[str, np.ndarray]] = []
@@ -399,29 +422,28 @@ def process_single_image(
 
         n_printed_batch = 3
         if batch_idx % n_printed_batch == 0 or batch_idx == n_batches - 1:
-            print(
+            logger.info(
                 f"            progress {progress:6.1%}  "
                 f"batch {batch_idx + 1}/{n_batches}  "
                 f"patch {end}/{n_patches}  "
                 f"{time_per_iter:.2f}s/batch  "
-                f"elapsed {elapsed:.0f}s  remaining {remaining:.0f}s",
-                flush=True,
+                f"elapsed {elapsed:.0f}s  remaining {remaining:.0f}s"
             )
 
-    print(f"      inference done ({time.time() - t0:.2f}s)", flush=True)
+    logger.info(f"      inference done ({time.time() - t0:.2f}s)")
 
-    print("[5/5] Merging detections ...", flush=True)
+    logger.info("[5/5] Merging detections ...")
     t0 = time.time()
     merged = merge_detections(all_detections)
-    print(f"      total detections before global NMS: {len(merged['boxes'])}", flush=True)
+    logger.info(f"      total detections before global NMS: {len(merged['boxes'])}")
 
     if not no_global_nms and len(merged["boxes"]) > 0:
         merged = apply_nms(merged, iou_threshold, nms_backend)
-        print(f"      detections after global NMS:        {len(merged['boxes'])}  ({time.time() - t0:.2f}s)", flush=True)
+        logger.info(f"      detections after global NMS:        {len(merged['boxes'])}  ({time.time() - t0:.2f}s)")
     elif no_global_nms:
-        print(f"      global NMS disabled  ({time.time() - t0:.2f}s)", flush=True)
+        logger.info(f"      global NMS disabled  ({time.time() - t0:.2f}s)")
     else:
-        print(f"      no detections  ({time.time() - t0:.2f}s)", flush=True)
+        logger.info(f"      no detections  ({time.time() - t0:.2f}s)")
 
     if "scores_original" in merged:
         merged["scores"] = merged.pop("scores_original")
@@ -443,19 +465,19 @@ def process_single_image(
         # written whenever explicitly requested (both are box records, independent of the rendering).
         json_path = str(output_dir / f"{image_name}_boxes.json")
         export_detections_json(merged, json_path, ref_meta=orig_meta, current_meta=resampled_meta)
-        print(f"      boxes -> {json_path}", flush=True)
+        logger.info(f"      boxes -> {json_path}")
 
         if export_pkl:
             pkl_path = str(output_dir / f"{image_name}_boxes.pkl")
             export_detections_pkl(merged, pkl_path, ref_meta=orig_meta, current_meta=resampled_meta)
-            print(f"      pkl   -> {pkl_path}", flush=True)
+            logger.info(f"      pkl   -> {pkl_path}")
 
         if output_format in ("nifti", "both"):
             mask_path = str(output_dir / f"{image_name}_mask.nii.gz")
             cc = detections_to_mask(merged, original_shape, preprocessed)
             cc = resample_mask_to_reference(cc, orig_meta)
             sitk.WriteImage(cc, mask_path)
-            print(f"      mask  -> {mask_path}", flush=True)
+            logger.info(f"      mask  -> {mask_path}")
 
             csv_path = str(output_dir / f"{image_name}_boxes.csv")
             export_detections_csv(
@@ -465,7 +487,7 @@ def process_single_image(
                 ref_meta=orig_meta,
                 current_meta=resampled_meta,
             )
-            print(f"      csv   -> {csv_path}", flush=True)
+            logger.info(f"      csv   -> {csv_path}")
 
         if output_format in ("dicom-sr", "both"):
             if Path(image_path).is_dir():
@@ -481,27 +503,27 @@ def process_single_image(
                     source_files=orig_meta.get("source_files"),
                 )
                 if written:
-                    print(f"      SR    -> {written}", flush=True)
+                    logger.info(f"      SR    -> {written}")
                 else:
-                    print("      SR    -> skipped (no detections)", flush=True)
+                    logger.info("      SR    -> skipped (no detections)")
             else:
-                print(
+                logger.info(
                     f"      SR    -> skipped ('{image_name}' is not a DICOM series; "
-                    "DICOM SR output requires DICOM input)",
-                    flush=True,
+                    "DICOM SR output requires DICOM input)"
                 )
 
-    print(f"      exports done  ({time.time() - t0:.2f}s)", flush=True)
+    logger.info(f"      exports done  ({time.time() - t0:.2f}s)")
 
     n_detections = len(merged["boxes"])
 
     # Per-image success sentinel (external orchestration reads {name}.done / {name}.failed).
     status_path = write_image_status(output_dir, image_name, ok=True)
-    print(f"      status -> {status_path}", flush=True)
+    logger.info(f"      status -> {status_path}")
 
     return n_detections
 
 
 if __name__ == "__main__":
-    print("\nStandalone nnDetection ONNX inference pipeline...\n", flush=True)
+    configure_logging()
+    logger.info("\nStandalone nnDetection ONNX inference pipeline...\n")
     main()

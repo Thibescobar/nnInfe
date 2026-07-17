@@ -530,6 +530,13 @@ class TestMain:
         assert (out_dir / "1.failed").exists()
         assert "InferenceError" in (out_dir / "1.failed").read_text()
         assert (out_dir / ".done").exists()  # batch-complete marker still written
+        # A per-image manifest is written for both the failed and the successful image.
+        import json
+        failed_manifest = json.loads((out_dir / "1_manifest.json").read_text())
+        assert failed_manifest["outcome"] == "failed"
+        assert failed_manifest["error"]["type"] == "InferenceError"
+        assert failed_manifest["pipeline"] == "detection" and failed_manifest["nninfe_version"]
+        assert json.loads((out_dir / "2_manifest.json").read_text())["outcome"] == "ok"
 
     @patch("nninfe.infer_detection.create_session")
     @patch("nninfe.infer_detection.process_single_image")
