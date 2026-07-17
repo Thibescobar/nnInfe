@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/python-≥3.10-blue)
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
 ![CI](https://img.shields.io/badge/CI-GitHub%20Actions-blue)
-![Tests](https://img.shields.io/badge/tests-178%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-187%20passed-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-94%25-brightgreen)
 ![Linting](https://img.shields.io/badge/linting-ruff-purple)
 
@@ -506,7 +506,7 @@ All backends produce **26 detections** — results are consistent across backend
 - **Single fold**: Uses one fold only. Multi-fold ensemble was intentionally deferred for industrialization simplicity and speed across both detection and segmentation.
 - **Segmentation batch dimension**: detection pads an incomplete final batch (by repeating the last patch), so a model with a fixed batch size still runs. Segmentation does **not** pad the last batch — it assumes the ONNX model accepts a dynamic batch dimension (or batch size 1, the nnUNet norm). A segmentation model exported with a **fixed batch dimension > 1** is therefore unsupported: the last, smaller batch would fail ONNX Runtime shape validation.
 - **Pipeline versioning**: Exports (JSON/CSV/PKL) should include a pipeline version number for traceability (medical device regulation).
-- **Robustness & observability (production-ready basics)**: pipeline progress is emitted through Python `logging` (levels; INFO→stdout, WARNING+→stderr, bare `%(message)s` format for a clean console), configured in `nninfe/common/logging_setup.py`. Failures are handled through a typed-error taxonomy (`nninfe/common/errors.py`) mapped to distinct process exit codes: usage errors exit `2`, operational failures `3–6`, an unexpected bug `1` (never masked), and a partial batch `7`; a failing image is isolated (logged, marked `{name}.failed`) so the run continues. Every processed image also gets a `{name}_manifest.json` audit record (nninfe version, model & plan SHA-256, effective params, backend/providers, duration, outcome, and on failure a `scope`/`retryable` classification). Remaining open items: reproducibility hashes inside the JSON/CSV/PKL result files themselves, input sanity guards, and a real-model verification harness.
+- **Robustness & observability (production-ready basics)**: pipeline progress is emitted through Python `logging` (levels; INFO→stdout, WARNING+→stderr, bare `%(message)s` format for a clean console), configured in `nninfe/common/logging_setup.py`. Failures are handled through a typed-error taxonomy (`nninfe/common/errors.py`) mapped to distinct process exit codes: usage errors exit `2`, operational failures `3–6`, an unexpected bug `1` (never masked), and a partial batch `7`; a failing image is isolated (logged, marked `{name}.failed`) so the run continues. Every processed image also gets a `{name}_manifest.json` audit record (nninfe version, model & plan SHA-256, effective params, backend/providers, duration, outcome, and on failure a `scope`/`retryable` classification) — the single source of provenance. Inputs are validated up front with a light, header-only guard (3D / single-channel / positive spacing / non-empty), failing cleanly with exit code `8`. Remaining open item: a real-model verification harness (golden-output regression).
 
 ---
 

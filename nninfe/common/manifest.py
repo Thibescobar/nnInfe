@@ -18,15 +18,23 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from nninfe import __version__
-from nninfe.common.errors import ExportError, ImageIOError, InferenceError, NnInfeError, SessionError
+from nninfe.common.errors import (
+    ExportError,
+    ImageIOError,
+    InferenceError,
+    InputValidationError,
+    NnInfeError,
+    SessionError,
+)
 
 # Orchestrator-facing classification per error type: what is the blast radius, and could a retry
 # plausibly succeed? Coarse on purpose — a signal, not a policy engine (the orchestrator decides).
 _ERROR_CLASS = {
-    ImageIOError: ("image", False),      # unreadable/bad input -> retrying won't help
-    InferenceError: ("batch", True),     # e.g. transient GPU OOM -> a retry (smaller batch) may work
-    ExportError: ("image", True),        # e.g. destination momentarily unavailable / disk -> retryable
-    SessionError: ("deployment", False),  # bad model / driver -> needs intervention
+    ImageIOError: ("image", False),          # unreadable/bad input -> retrying won't help
+    InputValidationError: ("image", False),  # invalid image content -> caller must fix the input
+    InferenceError: ("batch", True),         # e.g. transient GPU OOM -> a retry (smaller batch) may work
+    ExportError: ("image", True),            # e.g. destination momentarily unavailable / disk -> retryable
+    SessionError: ("deployment", False),     # bad model / driver -> needs intervention
 }
 
 
