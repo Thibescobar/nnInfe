@@ -268,6 +268,7 @@ The pipeline processes each detection image through 5 steps:
   └── Compute the anchors per patch from plan config (strides, decoder levels, anchor sizes)
 
 [2/5] Preprocessing
+  ├── Validate input (3D / single-channel / positive spacing) — fail fast on bad input
   ├── Resample to target spacing (ZYX from plan), mapping axes through transpose_forward if provided
   ├── Clip intensity (percentile 0.5 – 99.5 from plan)
   └── Normalize (z-score with mean/std from plan)
@@ -289,7 +290,8 @@ The pipeline processes each detection image through 5 steps:
   ├── Merge all patch detections
   ├── Global NMS (optional, enabled by default)
   ├── Restore original (unweighted) scores
-  └── Export: mask NIfTI + JSON + CSV (+ optional PKL)
+  └── Export: JSON always (+ optional PKL); per --output-format: mask NIfTI + CSV and/or DICOM SR;
+      plus a per-image run manifest + completion sentinel
 ```
 
 ### Segmentation Pipeline Architecture (nnUNet)
@@ -298,6 +300,7 @@ The pipeline processes each segmentation image through 3 main steps:
 
 ```
 [1/3] Preprocessing
+  ├── Validate input (3D / single-channel / positive spacing) — fail fast on bad input
   ├── Resample to target spacing (ZYX from plan), mapping axes through transpose_forward if provided
   ├── Flip axes to model expected orientation (if applicable)
   └── Pad volume (with minimum pixel value - 1) if smaller than patch size
@@ -309,7 +312,8 @@ The pipeline processes each segmentation image through 3 main steps:
 [3/3] Reconstruction & Export
   ├── Crop padded boundaries to restore original shape
   ├── Compute argmax across class probabilities to generate the final mask
-  └── Resample mask back to original reference geometry and export
+  └── Resample mask back to original geometry; export NIfTI and/or DICOM SEG (per --output-format)
+      + a per-image run manifest + completion sentinel
 ```
 
 ### Key design points
@@ -444,6 +448,10 @@ A voxel-level label map where integer values represent semantic classes as defin
 
 A DICOM Segmentation (SEG) object referencing the source series (shared Frame of Reference), with one segment per non-zero class (sparse label ids are remapped to contiguous segment numbers, the original id kept in the segment label). Requires DICOM **input**, since a SEG is spatially bound to the source instances. `--seg-encoding` selects `binary` (default — one binary plane per segment, widest viewer support, but file size *and export time* grow with the class count) or `labelmap` (a single compact label map — size and write time roughly independent of class count, so much smaller and faster for many-class masks; e.g. an 83-class whole-body model exports ~30× faster and ~3× smaller, but requires a newer viewer/PACS). The `nninfe` version is recorded as the algorithm/software version for traceability. Overlays directly on the source study in any DICOM viewer / PACS.
 
+### Output: `{name}_manifest.json` + completion sentinels (both pipelines)
+
+Every processed image writes a JSON **run manifest** — nninfe version, model & plan SHA-256, effective parameters, backend/providers, duration, and outcome (`ok` / `failed`, with a `scope` / `retryable` classification on failure). It is the per-image traceability/audit record (and the single source of provenance — the result files themselves are not stamped). Alongside it, a per-image **completion sentinel** is written for external orchestration: `{name}.done` on success or `{name}.failed` (carrying a sober, non-PHI error string) on failure; a shared `.done` marks the whole batch finished. Process **exit codes** are a stable contract (`0` ok, `2` usage, `3` session, `4` inference, `5` image I/O, `6` export, `7` partial batch, `8` input validation, `1` unexpected bug) — see [VERIFICATION.md](VERIFICATION.md).
+
 ---
 
 ## Inference Backends
@@ -455,7 +463,7 @@ A DICOM Segmentation (SEG) object referencing the source series (shared Frame of
 | `cuda` | CUDA → CPU | `model_onnx.onnx` | nnInfe-trt |
 | `trt` | TensorRT → CUDA → CPU | `model_onnx_shaped.onnx` | nnInfe-trt |
 
-- Use `--trt-fp16` for FP16 precision (recommended, fonctionnaly same results, ×2+ speedup vs TRT FP32).
+- Use `--trt-fp16` for FP16 precision (recommended, functionally same results, ×2+ speedup vs TRT FP32).
 - Use `--build-engine-only` to pre-compile engines without running inference.
 
 ---
@@ -506,7 +514,7 @@ All backends produce **26 detections** — results are consistent across backend
 - **Single fold**: Uses one fold only. Multi-fold ensemble was intentionally deferred for industrialization simplicity and speed across both detection and segmentation.
 - **Segmentation batch dimension**: detection pads an incomplete final batch (by repeating the last patch), so a model with a fixed batch size still runs. Segmentation does **not** pad the last batch — it assumes the ONNX model accepts a dynamic batch dimension (or batch size 1, the nnUNet norm). A segmentation model exported with a **fixed batch dimension > 1** is therefore unsupported: the last, smaller batch would fail ONNX Runtime shape validation.
 - **Pipeline versioning**: Exports (JSON/CSV/PKL) should include a pipeline version number for traceability (medical device regulation).
-- **Robustness & observability (production-ready basics)**: pipeline progress is emitted through Python `logging` (levels; INFO→stdout, WARNING+→stderr, bare `%(message)s` format for a clean console), configured in `nninfe/common/logging_setup.py`. Failures are handled through a typed-error taxonomy (`nninfe/common/errors.py`) mapped to distinct process exit codes: usage errors exit `2`, operational failures `3–6`, an unexpected bug `1` (never masked), and a partial batch `7`; a failing image is isolated (logged, marked `{name}.failed`) so the run continues. Every processed image also gets a `{name}_manifest.json` audit record (nninfe version, model & plan SHA-256, effective params, backend/providers, duration, outcome, and on failure a `scope`/`retryable` classification) — the single source of provenance. Inputs are validated up front with a light, header-only guard (3D / single-channel / positive spacing / non-empty), failing cleanly with exit code `8`. Remaining open item: a real-model verification harness (golden-output regression).
+- **Robustness & observability (production-ready basics)**: pipeline progress is emitted through Python `logging` (levels; INFO→stdout, WARNING+→stderr, bare `%(message)s` format for a clean console), configured in `nninfe/common/logging_setup.py`. Failures are handled through a typed-error taxonomy (`nninfe/common/errors.py`) mapped to distinct process exit codes: usage errors exit `2`, operational failures `3–6`, an unexpected bug `1` (never masked), and a partial batch `7`; a failing image is isolated (logged, marked `{name}.failed`) so the run continues. Every processed image also gets a `{name}_manifest.json` audit record (nninfe version, model & plan SHA-256, effective params, backend/providers, duration, outcome, and on failure a `scope`/`retryable` classification) — the single source of provenance. Inputs are validated up front with a light, header-only guard (3D / single-channel / positive spacing / non-empty), failing cleanly with exit code `8`. Real-model verification is a **manual QA procedure** (deliberately not an in-repo harness, to avoid bundling models/patient data) — the release acceptance checklist is in [VERIFICATION.md](VERIFICATION.md).
 
 ---
 
