@@ -168,7 +168,6 @@ def main() -> None:
             else:
                 tag = "  (default)"
         logger.info(f"  --{name.replace('_', '-')} : {value}{tag}")
-    logger.info("")
 
     with open(args.plan_path, "r") as f:
         plan_inference = json.load(f)
@@ -199,13 +198,13 @@ def main() -> None:
     logger.info(f"      Session ready  ({time.time() - t_session:.2f}s)")
 
     if args.build_engine_only:
-        logger.info("\nEngine built and cached. Exiting.")
+        logger.info("Engine built and cached. Exiting.")
         return
 
     iou_threshold = args.iou_threshold
     if iou_threshold is None:
         iou_threshold = plan_inference["inference_plan"]["model_iou"]
-        logger.info(f"      iou-threshold not specified, using plan value: {iou_threshold}\n")
+        logger.info(f"      iou-threshold not specified, using plan value: {iou_threshold}")
 
     logger.info("[1/5] Computing anchors ...")
     t0 = time.time()
@@ -213,7 +212,7 @@ def main() -> None:
     logger.info(f"      anchors shape: {anchors_batch.shape}  ({time.time() - t0:.2f}s)")
 
     if args.image_dir:
-        logger.info(f"\n      Found {len(image_paths)} images in {args.image_dir}\n")
+        logger.info(f"      Found {len(image_paths)} images in {args.image_dir}")
 
     # Run-level manifest context, built once (model/plan hashed a single time for the whole batch).
     run_context = build_run_context(
@@ -243,7 +242,7 @@ def main() -> None:
             image_name = image_name[:-4]
 
         if len(image_paths) > 1:
-            logger.info(f"\n{'='*60}")
+            logger.info(f"{'='*60}")
             logger.info(f"  Image {img_idx + 1}/{len(image_paths)}: {img_path.name}")
             logger.info(f"{'='*60}")
 
@@ -293,7 +292,7 @@ def main() -> None:
 
     n_failed = len(operational_failures) + len(bug_failures)
     if len(image_paths) > 1:
-        logger.info(f"\n{'='*60}")
+        logger.info(f"{'='*60}")
         logger.info(f"  Summary: {len(image_paths)} images, {n_failed} failed")
         for name, n_det in summary:
             status = "FAILED" if n_det is None else f"{n_det} detections"
@@ -303,7 +302,7 @@ def main() -> None:
     # finished", while {name}.done / {name}.failed carry each image's actual outcome).
     Path(args.output_dir, ".done").write_text("done")
 
-    logger.info(f"\nDone. Total time: {time.time() - t_total:.2f}s")
+    logger.info(f"Done. Total time: {time.time() - t_total:.2f}s")
 
     if bug_failures:
         # A programming bug occurred: never mask it behind the benign "partial" code.
@@ -525,5 +524,5 @@ def process_single_image(
 
 if __name__ == "__main__":
     configure_logging()
-    logger.info("\nStandalone nnDetection ONNX inference pipeline...\n")
+    logger.info("Standalone nnDetection ONNX inference pipeline...")
     main()

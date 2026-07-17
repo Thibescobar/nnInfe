@@ -131,7 +131,7 @@ def create_session(
         # message stays sober (backend only, no raw cause) — the cause is chained for the logs.
         raise SessionError(f"failed to create ONNX Runtime session (backend={backend})") from exc
     actual = session.get_providers()
-    logger.info(f"      ONNX Runtime providers: {actual}\n")
+    logger.info(f"      ONNX Runtime providers: {actual}")
     return session
 
 
