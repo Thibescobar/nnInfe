@@ -48,6 +48,7 @@ nninfe/
 ├── common/                  # shared by both pipelines
 │   ├── cli.py               # --image-path / --image-dir resolution (NIfTI file or DICOM series dir)
 │   ├── constants.py         # box axis-index constants D0_MIN…D2_MAX
+│   ├── errors.py            # typed error taxonomy + exit codes + translate_errors / fail_usage / write_image_status
 │   ├── io.py                # image I/O hub: read NIfTI + DICOM series; write DICOM SEG (binary|labelmap) + detection SR (TID 1500)
 │   ├── preprocessing.py     # resample / clip / z-score / pad / resample-back-to-reference
 │   ├── session.py           # ORT session, BACKENDS map, in-process GPU lib preload, run/parse
@@ -124,4 +125,9 @@ For `trt`, engines are compiled and cached in `trt_engine_cache_{fp16,fp32}/` ne
 - **Tests never load a real ONNX model** — the session is a `MagicMock` whose `.run` returns hand-crafted output arrays (see `tests/test_integration.py`). This mirrors `parse_outputs`' expected layout: `batch_size` box arrays, then `batch_size` score arrays, then `batch_size` label arrays. Follow this pattern for new inference tests.
 - **All progress output is `print(..., flush=True)`**, not the `logging` module (a known limitation flagged for production). Match the existing `[n/N] step …` style if adding pipeline steps.
 - **`nninfe/data/` is not tracked in git** — all paths are passed via CLI, so models/images can live anywhere; `data/` is just a dev convenience location.
-- Each processed image also writes a `.done` sentinel file into the output dir (used by external orchestration to detect completion).
+- **Completion sentinels** (used by external orchestration): each image writes a per-image `{name}.done` on success or `{name}.failed` (carrying the error) on failure; the batch also writes a single shared `.done` when the whole run finishes (kept for backward compatibility — it now means "run complete", not per-image status). Written via `write_image_status` in `common/errors.py`.
+- **Error handling / exit codes** (Phase 1 + 1.1 of the production-robustness plan; Phase 2 = `logging` + run manifest, still open): `common/errors.py` defines the typed-error taxonomy (`SessionError`/`InferenceError`/`ImageIOError`/`ExportError`, all `NnInfeError`) and the stable exit-code contract (0 ok, 1 unexpected/bug, 2 usage, 3 session, 4 inference, 5 image I/O, 6 export, 7 partial batch). Three error families are kept distinct:
+  - **Usage errors** (bad args/config) → `fail_usage()` prints a clean message and exits `2` (no traceback).
+  - **Operational errors** (expected dependency failures) → translated to typed errors *only for the exceptions a dependency actually raises*, via `translate_errors(cls, caught, message)` (session/inference at the ORT boundary in `session.py`/`pipeline.py`; preprocess→`ImageIOError`, export→`ExportError` in the CLIs). Note: ONNX Runtime exceptions subclass `Exception` **directly** (not `RuntimeError`) with no shared base, so `session.py` collects them dynamically into `_ORT_EXCEPTIONS`.
+  - **Programming bugs** (anything not in `caught`) are **never** relabeled — they propagate to Python's default exit `1` + traceback. In the batch loop a bug on one image is isolated (logged with traceback, marked `{name}.failed`) but forces `EXIT_RUNTIME`, never the benign partial code (policy (a)). Operational per-image failures → `EXIT_PARTIAL`.
+  - Persisted error strings (the `{name}.failed` sentinel, the typed messages) are **PHI-sober**: a stable message only, never the raw dependency `str(exc)` (which can carry a patient-bearing path); the original cause is chained via `from exc` for the logs.

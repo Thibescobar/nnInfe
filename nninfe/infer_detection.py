@@ -6,13 +6,26 @@ import math
 import os
 import sys
 import time
+import traceback
 from pathlib import Path
 from typing import Dict, List
 
 import numpy as np
 import SimpleITK as sitk
+from pydicom.errors import InvalidDicomError
 
 from nninfe.common.cli import collect_image_inputs
+from nninfe.common.errors import (
+    EXIT_PARTIAL,
+    EXIT_RUNTIME,
+    ExportError,
+    ImageIOError,
+    NnInfeError,
+    SessionError,
+    fail_usage,
+    translate_errors,
+    write_image_status,
+)
 from nninfe.common.io import write_detection_dicom_sr
 from nninfe.common.preprocessing import pad_volume_to_patch_size, preprocess_image, resample_mask_to_reference
 from nninfe.common.session import BACKENDS, create_session, parse_outputs, run_inference
@@ -32,6 +45,12 @@ from nninfe.detection.postprocessing import (
     postprocess,
     translate_boxes,
 )
+
+# Expected operational failures per stage (everything else is a bug -> propagates to EXIT_RUNTIME).
+# Reading: SimpleITK raises RuntimeError, missing files OSError, our own single-series check
+# ValueError. Export: adds pydicom's InvalidDicomError (source series re-read by the DICOM writers).
+_READ_ERRORS = (OSError, RuntimeError, ValueError)
+_EXPORT_ERRORS = (OSError, RuntimeError, ValueError, InvalidDicomError)
 
 
 def main() -> None:
@@ -108,28 +127,28 @@ def main() -> None:
     plan_path = Path(args.plan_path)
 
     if not model_path.is_file():
-        sys.exit(f"Error: model not found: {args.model_path}")
+        fail_usage(f"model not found: {args.model_path}")
     if model_path.suffix != ".onnx":
-        sys.exit(f"Error: model must be .onnx, got: {model_path.suffix}")
+        fail_usage(f"model must be .onnx, got: {model_path.suffix}")
     if not plan_path.is_file():
-        sys.exit(f"Error: plan not found: {args.plan_path}")
+        fail_usage(f"plan not found: {args.plan_path}")
     if plan_path.suffix != ".json":
-        sys.exit(f"Error: plan must be .json, got: {plan_path.suffix}")
+        fail_usage(f"plan must be .json, got: {plan_path.suffix}")
 
     if not args.build_engine_only:
         if not args.output_dir:
-            sys.exit("Error: --output-dir is required for inference")
+            fail_usage("--output-dir is required for inference")
         image_paths = collect_image_inputs(args.image_path, args.image_dir)
     else:
         image_paths = []
 
     if not 0.0 <= args.overlap < 1.0:
-        sys.exit(f"Error: --overlap must be in [0, 1), got: {args.overlap}")
+        fail_usage(f"--overlap must be in [0, 1), got: {args.overlap}")
     if not 0.0 <= args.score_thresh <= 1.0:
-        sys.exit(f"Error: --score-thresh must be in [0, 1], got: {args.score_thresh}")
+        fail_usage(f"--score-thresh must be in [0, 1], got: {args.score_thresh}")
     if args.output_format in ("dicom-sr", "both") and args.image_path and not Path(args.image_path).is_dir():
-        sys.exit(
-            "Error: --output-format dicom-sr/both requires DICOM input (a series directory); "
+        fail_usage(
+            "--output-format dicom-sr/both requires DICOM input (a series directory); "
             f"--image-path is not a directory: {args.image_path}"
         )
 
@@ -165,7 +184,12 @@ def main() -> None:
             )
 
     t_session = time.time()
-    session = create_session(args.model_path, args.backend, args.trt_fp16)
+    try:
+        session = create_session(args.model_path, args.backend, args.trt_fp16)
+    except SessionError as exc:
+        # Fatal: without a session no image can be processed (bad model, driver/engine mismatch).
+        print(f"FATAL: {exc}", file=sys.stderr, flush=True)
+        sys.exit(exc.exit_code)
     batch_size: int = session.get_inputs()[0].shape[0]
     print(f"      Session ready  ({time.time() - t_session:.2f}s)", flush=True)
 
@@ -188,6 +212,8 @@ def main() -> None:
 
     t_total = time.time()
     summary = []
+    operational_failures = []  # expected per-image failures (typed) -> partial batch
+    bug_failures = []          # unexpected errors (programming bugs) -> EXIT_RUNTIME
 
     for img_idx, img_path in enumerate(image_paths):
         image_name = img_path.name
@@ -201,33 +227,67 @@ def main() -> None:
             print(f"  Image {img_idx + 1}/{len(image_paths)}: {img_path.name}", flush=True)
             print(f"{'='*60}", flush=True)
 
-        result = process_single_image(
-            session=session,
-            image_path=str(img_path),
-            output_dir=Path(args.output_dir),
-            plan_inference=plan_inference,
-            patch_size=patch_size,
-            batch_size=batch_size,
-            anchors_batch=anchors_batch,
-            iou_threshold=iou_threshold,
-            overlap=args.overlap,
-            score_thresh=args.score_thresh,
-            min_size_mm=args.min_size_mm,
-            nms_backend=args.nms_backend,
-            no_global_nms=args.no_global_nms,
-            export_pkl=args.export_pkl,
-            pad_value=args.pad_value,
-            output_format=args.output_format,
-        )
-        summary.append((image_name, result))
+        # Per-image fault isolation: a failing image never discards the others' results. Expected
+        # (typed) failures are marked and the batch stays "partial"; an unexpected error is a bug —
+        # it is logged loudly with a full traceback and forces EXIT_RUNTIME so it is never mistaken
+        # for a benign per-image failure (policy (a)).
+        try:
+            result = process_single_image(
+                session=session,
+                image_path=str(img_path),
+                output_dir=Path(args.output_dir),
+                plan_inference=plan_inference,
+                patch_size=patch_size,
+                batch_size=batch_size,
+                anchors_batch=anchors_batch,
+                iou_threshold=iou_threshold,
+                overlap=args.overlap,
+                score_thresh=args.score_thresh,
+                min_size_mm=args.min_size_mm,
+                nms_backend=args.nms_backend,
+                no_global_nms=args.no_global_nms,
+                export_pkl=args.export_pkl,
+                pad_value=args.pad_value,
+                output_format=args.output_format,
+            )
+            summary.append((image_name, result))
+        except NnInfeError as exc:
+            kind = type(exc).__name__
+            # Sober, non-PHI detail (typed name + stable message; the cause is chained for logs).
+            print(f"  ERROR [{image_name}]: {kind}: {exc}", file=sys.stderr, flush=True)
+            write_image_status(args.output_dir, image_name, ok=False, detail=f"{kind}: {exc}")
+            summary.append((image_name, None))
+            operational_failures.append((image_name, exc))
+        except Exception:
+            print(f"  INTERNAL ERROR [{image_name}] — this is a bug, not an operational failure:",
+                  file=sys.stderr, flush=True)
+            traceback.print_exc()
+            write_image_status(args.output_dir, image_name, ok=False, detail=f"InternalError: {image_name}")
+            summary.append((image_name, None))
+            bug_failures.append(image_name)
 
+    n_failed = len(operational_failures) + len(bug_failures)
     if len(image_paths) > 1:
         print(f"\n{'='*60}", flush=True)
-        print(f"  Summary: {len(image_paths)} images processed", flush=True)
+        print(f"  Summary: {len(image_paths)} images, {n_failed} failed", flush=True)
         for name, n_det in summary:
-            print(f"    {name}: {n_det} detections", flush=True)
+            status = "FAILED" if n_det is None else f"{n_det} detections"
+            print(f"    {name}: {status}", flush=True)
+
+    # Batch-complete marker (kept for backward-compatible orchestration: now means "run
+    # finished", while {name}.done / {name}.failed carry each image's actual outcome).
+    Path(args.output_dir, ".done").write_text("done")
 
     print(f"\nDone. Total time: {time.time() - t_total:.2f}s", flush=True)
+
+    if bug_failures:
+        # A programming bug occurred: never mask it behind the benign "partial" code.
+        sys.exit(EXIT_RUNTIME)
+    if operational_failures:
+        # All images failed the same way -> surface that typed exit code; otherwise partial.
+        if len(operational_failures) == len(image_paths):
+            sys.exit(operational_failures[0][1].exit_code)
+        sys.exit(EXIT_PARTIAL)
 
 
 def process_single_image(
@@ -263,8 +323,9 @@ def process_single_image(
 
     print("[2/5] Preprocessing image ...", flush=True)
     t0 = time.time()
-    preprocessed, orig_meta = preprocess_image(image_path, plan_inference)
-    volume = sitk.GetArrayFromImage(preprocessed)
+    with translate_errors(ImageIOError, _READ_ERRORS, "failed to read or preprocess input image"):
+        preprocessed, orig_meta = preprocess_image(image_path, plan_inference)
+        volume = sitk.GetArrayFromImage(preprocessed)
     spacing_xyz = preprocessed.GetSpacing()
     print(f"      preprocessing done  ({time.time() - t0:.2f}s)", flush=True)
 
@@ -368,75 +429,75 @@ def process_single_image(
     merged = clip_boxes_to_image_shape(merged, original_shape)
 
     t0 = time.time()
-    os.makedirs(output_dir, exist_ok=True)
+    with translate_errors(ExportError, _EXPORT_ERRORS, "failed to export results"):
+        os.makedirs(output_dir, exist_ok=True)
 
-    resampled_meta = {
-        "size_xyz": preprocessed.GetSize(),
-        "spacing_xyz": preprocessed.GetSpacing(),
-        "origin": preprocessed.GetOrigin(),
-        "direction": preprocessed.GetDirection(),
-    }
+        resampled_meta = {
+            "size_xyz": preprocessed.GetSize(),
+            "spacing_xyz": preprocessed.GetSpacing(),
+            "origin": preprocessed.GetOrigin(),
+            "direction": preprocessed.GetDirection(),
+        }
 
-    # The JSON detection record is always written, regardless of --output-format; the PKL is
-    # written whenever explicitly requested (both are box records, independent of the rendering).
-    json_path = str(output_dir / f"{image_name}_boxes.json")
-    export_detections_json(merged, json_path, ref_meta=orig_meta, current_meta=resampled_meta)
-    print(f"      boxes -> {json_path}", flush=True)
+        # The JSON detection record is always written, regardless of --output-format; the PKL is
+        # written whenever explicitly requested (both are box records, independent of the rendering).
+        json_path = str(output_dir / f"{image_name}_boxes.json")
+        export_detections_json(merged, json_path, ref_meta=orig_meta, current_meta=resampled_meta)
+        print(f"      boxes -> {json_path}", flush=True)
 
-    if export_pkl:
-        pkl_path = str(output_dir / f"{image_name}_boxes.pkl")
-        export_detections_pkl(merged, pkl_path, ref_meta=orig_meta, current_meta=resampled_meta)
-        print(f"      pkl   -> {pkl_path}", flush=True)
+        if export_pkl:
+            pkl_path = str(output_dir / f"{image_name}_boxes.pkl")
+            export_detections_pkl(merged, pkl_path, ref_meta=orig_meta, current_meta=resampled_meta)
+            print(f"      pkl   -> {pkl_path}", flush=True)
 
-    if output_format in ("nifti", "both"):
-        mask_path = str(output_dir / f"{image_name}_mask.nii.gz")
-        cc = detections_to_mask(merged, original_shape, preprocessed)
-        cc = resample_mask_to_reference(cc, orig_meta)
-        sitk.WriteImage(cc, mask_path)
-        print(f"      mask  -> {mask_path}", flush=True)
+        if output_format in ("nifti", "both"):
+            mask_path = str(output_dir / f"{image_name}_mask.nii.gz")
+            cc = detections_to_mask(merged, original_shape, preprocessed)
+            cc = resample_mask_to_reference(cc, orig_meta)
+            sitk.WriteImage(cc, mask_path)
+            print(f"      mask  -> {mask_path}", flush=True)
 
-        csv_path = str(output_dir / f"{image_name}_boxes.csv")
-        export_detections_csv(
-            merged,
-            csv_path,
-            image_name=image_name,
-            ref_meta=orig_meta,
-            current_meta=resampled_meta,
-        )
-        print(f"      csv   -> {csv_path}", flush=True)
-
-    if output_format in ("dicom-sr", "both"):
-        if Path(image_path).is_dir():
-            sr_path = str(output_dir / f"{image_name}_sr.dcm")
-            written = write_detection_dicom_sr(
-                merged["boxes"],
-                merged["scores"],
-                merged["labels"],
-                image_path,
-                orig_meta,
-                sr_path,
+            csv_path = str(output_dir / f"{image_name}_boxes.csv")
+            export_detections_csv(
+                merged,
+                csv_path,
+                image_name=image_name,
+                ref_meta=orig_meta,
                 current_meta=resampled_meta,
-                source_files=orig_meta.get("source_files"),
             )
-            if written:
-                print(f"      SR    -> {written}", flush=True)
+            print(f"      csv   -> {csv_path}", flush=True)
+
+        if output_format in ("dicom-sr", "both"):
+            if Path(image_path).is_dir():
+                sr_path = str(output_dir / f"{image_name}_sr.dcm")
+                written = write_detection_dicom_sr(
+                    merged["boxes"],
+                    merged["scores"],
+                    merged["labels"],
+                    image_path,
+                    orig_meta,
+                    sr_path,
+                    current_meta=resampled_meta,
+                    source_files=orig_meta.get("source_files"),
+                )
+                if written:
+                    print(f"      SR    -> {written}", flush=True)
+                else:
+                    print("      SR    -> skipped (no detections)", flush=True)
             else:
-                print("      SR    -> skipped (no detections)", flush=True)
-        else:
-            print(
-                f"      SR    -> skipped ('{image_name}' is not a DICOM series; "
-                "DICOM SR output requires DICOM input)",
-                flush=True,
-            )
+                print(
+                    f"      SR    -> skipped ('{image_name}' is not a DICOM series; "
+                    "DICOM SR output requires DICOM input)",
+                    flush=True,
+                )
 
     print(f"      exports done  ({time.time() - t0:.2f}s)", flush=True)
 
     n_detections = len(merged["boxes"])
 
-    done_path = str(output_dir / ".done")
-    with open(done_path, "w") as f:
-        f.write("done")
-    print(f"      .done file -> {done_path}", flush=True)
+    # Per-image success sentinel (external orchestration reads {name}.done / {name}.failed).
+    status_path = write_image_status(output_dir, image_name, ok=True)
+    print(f"      status -> {status_path}", flush=True)
 
     return n_detections
 

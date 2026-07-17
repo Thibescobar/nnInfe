@@ -252,7 +252,7 @@ class TestDetectionCliSrOutput:
 
         _run_det(nifti, out_dir, "dicom-sr")
         assert not list(out_dir.glob("*.dcm"))
-        assert (out_dir / ".done").exists()
+        assert (out_dir / "vol.done").exists()
 
     def test_main_dicom_sr_requires_dicom_input(self, tmp_path):
         import json
@@ -274,4 +274,5 @@ class TestDetectionCliSrOutput:
         ]
         with patch("sys.argv", argv), pytest.raises(SystemExit) as exc:
             main()
-        assert "requires DICOM input" in str(exc.value)
+        # Usage error -> EXIT_USAGE (2), message on stderr.
+        assert exc.value.code == 2
