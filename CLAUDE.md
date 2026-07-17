@@ -49,7 +49,7 @@ nninfe/
 │   ├── cli.py               # --image-path / --image-dir resolution (NIfTI file or DICOM series dir)
 │   ├── constants.py         # box axis-index constants D0_MIN…D2_MAX
 │   ├── errors.py            # typed error taxonomy + exit codes + translate_errors / fail_usage / write_image_status
-│   ├── logging_setup.py     # configure_logging(): 'nninfe' logger, INFO→stdout / WARNING+→stderr, bare format (terminal-identical to old print)
+│   ├── logging_setup.py     # configure_logging(): 'nninfe' logger, INFO→stdout / WARNING+→stderr, bare format; NullHandler at import for library use
 │   ├── manifest.py          # per-image {name}_manifest.json audit record (version, model/plan sha256, params, providers, duration, outcome, scope/retryable)
 │   ├── io.py                # image I/O hub: read NIfTI + DICOM series; write DICOM SEG (binary|labelmap) + detection SR (TID 1500)
 │   ├── preprocessing.py     # resample / clip / z-score / pad / resample-back-to-reference
@@ -76,7 +76,7 @@ tests/                       # pytest; the ONNX session is mocked (no real model
 `nninfe/common/` holds everything both pipelines share; `detection/` and `segmentation/` add only the model-family-specific logic. Both CLIs follow the same skeleton: validate args → `create_session` once → loop images through `process_single_image` (session, anchors, and plan are created once and **reused across a batch**).
 
 - `common/session.py` — backend→provider mapping (`BACKENDS` dict), session creation, and `run_inference`/`parse_outputs`. **Batch size is read from the ONNX input shape** (`session.get_inputs()[0].shape[0]`), not a CLI flag. Also owns `_ORT_EXCEPTIONS` (ONNX Runtime's exception classes, collected dynamically — see the error-handling gotcha below).
-- `common/logging_setup.py` — `configure_logging()` sets up the `nninfe` logger. **Progress uses `logging`, not `print`, but the terminal output is byte-identical to before** (INFO→stdout / WARNING+→stderr, bare `%(message)s`, flush per record). Modules log via `logging.getLogger(__name__)`; both CLIs call `configure_logging()` at startup. A regression harness diffs captured terminal output to guarantee the "identical" property.
+- `common/logging_setup.py` — `configure_logging()` sets up the `nninfe` logger. **Progress uses `logging`, not `print`**: INFO→stdout / WARNING+→stderr, bare `%(message)s`, flush per record — a clean, level-free console (a richer format/JSON sink belongs on a separate handler at ingestion time, not the terminal). A `NullHandler` is attached at import so library use without `configure_logging()` stays silent. Modules log via `logging.getLogger(__name__)`; both CLIs call `configure_logging()` at startup.
 - `common/manifest.py` — writes a per-image `{name}_manifest.json` audit record. Run-level context (nninfe version, model & plan SHA-256, backend, providers, params) is built **once per run** (`build_run_context`, so the model is hashed a single time); per image it adds outcome/duration and, on failure, `classify_error()`'s `{type, scope, retryable}` for the orchestrator.
 - `common/preprocessing.py` — `preprocess_image` chain: read → cast → `resample_image` (to plan `target_spacing`) → clip (percentiles) → z-score normalize. `resample_mask_to_reference` is the inverse used to map results back to the *original* input geometry (nearest-neighbor).
 - `common/sliding_window.py` — `compute_patch_positions` distributes patches evenly so overlap is **≥** requested and the last patch ends exactly at the boundary; `extract_patch` slices.

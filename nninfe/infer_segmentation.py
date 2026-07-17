@@ -240,7 +240,6 @@ def main() -> None:
         if name in defaults and value == defaults[name]:
             tag = "  (default)"
         logger.info(f"  --{name.replace('_', '-')} : {value}{tag}")
-    logger.info("")
 
     logger.info("Loading plan …")
     with open(plan_path, "r") as f:
@@ -281,7 +280,7 @@ def main() -> None:
     os.makedirs(output_dir, exist_ok=True)
 
     if args.image_dir:
-        logger.info(f"\n      Found {len(image_paths)} images in {args.image_dir}\n")
+        logger.info(f"      Found {len(image_paths)} images in {args.image_dir}")
 
     # Run-level manifest context, built once (model/plan hashed a single time for the whole batch).
     run_context = build_run_context(
@@ -309,7 +308,7 @@ def main() -> None:
             image_name = image_name[:-4]
 
         if len(image_paths) > 1:
-            logger.info(f"\n{'='*60}")
+            logger.info(f"{'='*60}")
             logger.info(f"  Image {idx + 1}/{len(image_paths)}: {image_path.name}")
             logger.info(f"{'='*60}")
 
@@ -352,7 +351,7 @@ def main() -> None:
 
     n_failed = len(operational_failures) + len(bug_failures)
     if len(image_paths) > 1:
-        logger.info(f"\n{'='*60}")
+        logger.info(f"{'='*60}")
         logger.info(f"  Summary: {len(image_paths)} images, {n_failed} failed")
         for name, out_mask in summary:
             logger.info(f"    {name}: {'FAILED' if out_mask is None else out_mask}")
@@ -361,7 +360,7 @@ def main() -> None:
     # finished", while {name}.done / {name}.failed carry each image's actual outcome).
     Path(output_dir, ".done").write_text("done")
 
-    logger.info(f"\nDone. Total time: {time.time() - t_total:.2f}s")
+    logger.info(f"Done. Total time: {time.time() - t_total:.2f}s")
 
     if bug_failures:
         # A programming bug occurred: never mask it behind the benign "partial" code.
@@ -375,5 +374,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     configure_logging()
-    logger.info("\nStandalone nnUNet ONNX segmentation pipeline…\n")
+    logger.info("Standalone nnUNet ONNX segmentation pipeline…")
     main()
