@@ -8,6 +8,8 @@ from typing import List, Tuple
 import numpy as np
 import SimpleITK as sitk
 
+from nninfe.common.errors import InferenceError
+from nninfe.common.session import _ORT_EXCEPTIONS
 from nninfe.common.sliding_window import compute_patch_positions, extract_patch
 
 
@@ -108,9 +110,14 @@ def _run_segmentation_batch(
 ) -> np.ndarray:
     """Run one segmentation batch and return logits as (B, C, Z, Y, X)."""
     input_array = np.stack([p[np.newaxis, ...] for p in patches], axis=0).astype(np.float32, copy=False)
-    outputs = session.run(None, {input_name: input_array})
+    try:
+        outputs = session.run(None, {input_name: input_array})
+    except _ORT_EXCEPTIONS as exc:
+        # Expected ORT execution failures (GPU OOM, engine incompatibility, invalid binding).
+        # Bugs on our side are left to propagate as EXIT_RUNTIME rather than masked here.
+        raise InferenceError("ONNX inference failed") from exc
     if not outputs:
-        raise RuntimeError("Segmentation model returned no outputs.")
+        raise InferenceError("Segmentation model returned no outputs.")
     return _normalize_logits_shape(np.asarray(outputs[0]))
 
 

@@ -322,10 +322,11 @@ class TestSegmentationCliDicomOutput:
             overlap=0.5,
             output_format="dicom-seg",
         )
-        # SEG requires DICOM input: none written, but the run still completes (.done present).
+        # SEG requires DICOM input: none written, but the run still completes (per-image
+        # status sentinel present, and it is what process_single_image returns).
         assert not list(output_dir.glob("*.dcm"))
-        assert (output_dir / ".done").exists()
-        assert out == str(output_dir / ".done")
+        assert (output_dir / "vol.done").exists()
+        assert out == str(output_dir / "vol.done")
 
     def test_main_dicom_seg_requires_dicom_input(self, tmp_path):
         import json
@@ -352,4 +353,5 @@ class TestSegmentationCliDicomOutput:
         ]
         with patch("sys.argv", argv), pytest.raises(SystemExit) as exc:
             main()
-        assert "requires DICOM input" in str(exc.value)
+        # Usage error -> EXIT_USAGE (2), message on stderr.
+        assert exc.value.code == 2

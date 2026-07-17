@@ -1,47 +1,54 @@
 import pytest
 
 from nninfe.common.cli import collect_image_inputs
+from nninfe.common.errors import EXIT_USAGE
 
 
-def test_collect_both_args_exits():
+def _assert_usage_exit(exc, capsys, expected_msg):
+    """Usage errors exit with EXIT_USAGE (2) and print a clean message to stderr (no traceback)."""
+    assert exc.value.code == EXIT_USAGE
+    assert expected_msg in capsys.readouterr().err
+
+
+def test_collect_both_args_exits(capsys):
     with pytest.raises(SystemExit) as exc:
         collect_image_inputs("img.nii", "dir/")
-    assert "mutually exclusive" in str(exc.value)
+    _assert_usage_exit(exc, capsys, "mutually exclusive")
 
 
-def test_collect_neither_args_exits():
+def test_collect_neither_args_exits(capsys):
     with pytest.raises(SystemExit) as exc:
         collect_image_inputs()
-    assert "required" in str(exc.value)
+    _assert_usage_exit(exc, capsys, "required")
 
 
-def test_collect_missing_image_exits(tmp_path):
+def test_collect_missing_image_exits(tmp_path, capsys):
     with pytest.raises(SystemExit) as exc:
         collect_image_inputs(image_path=str(tmp_path / "missing.nii"))
-    assert "not found" in str(exc.value)
+    _assert_usage_exit(exc, capsys, "not found")
 
 
-def test_collect_invalid_ext_exits(tmp_path):
+def test_collect_invalid_ext_exits(tmp_path, capsys):
     invalid = tmp_path / "image.txt"
     invalid.write_text("")
     with pytest.raises(SystemExit) as exc:
         collect_image_inputs(image_path=str(invalid))
-    assert "must be a NIfTI file" in str(exc.value)
+    _assert_usage_exit(exc, capsys, "must be a NIfTI file")
 
 
-def test_collect_missing_dir_exits(tmp_path):
+def test_collect_missing_dir_exits(tmp_path, capsys):
     with pytest.raises(SystemExit) as exc:
         collect_image_inputs(image_dir=str(tmp_path / "missing_dir"))
-    assert "directory not found" in str(exc.value)
+    _assert_usage_exit(exc, capsys, "directory not found")
 
 
-def test_collect_empty_dir_exits(tmp_path):
+def test_collect_empty_dir_exits(tmp_path, capsys):
     empty = tmp_path / "empty_dir"
     empty.mkdir()
     (empty / "not_an_image.txt").write_text("")
     with pytest.raises(SystemExit) as exc:
         collect_image_inputs(image_dir=str(empty))
-    assert "no NIfTI files or DICOM series directories" in str(exc.value)
+    _assert_usage_exit(exc, capsys, "no NIfTI files or DICOM series directories")
 
 
 def test_collect_valid_dir_nifti(tmp_path):

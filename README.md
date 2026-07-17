@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/python-≥3.10-blue)
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
 ![CI](https://img.shields.io/badge/CI-GitHub%20Actions-blue)
-![Tests](https://img.shields.io/badge/tests-152%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-170%20passed-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-94%25-brightgreen)
 ![Linting](https://img.shields.io/badge/linting-ruff-purple)
 
@@ -506,7 +506,7 @@ All backends produce **26 detections** — results are consistent across backend
 - **Single fold**: Uses one fold only. Multi-fold ensemble was intentionally deferred for industrialization simplicity and speed across both detection and segmentation.
 - **Structured logging**: Currently all output is `print()`. Production should use Python `logging` with levels (DEBUG/INFO/WARNING).
 - **Pipeline versioning**: Exports (JSON/CSV/PKL) should include a pipeline version number for traceability (medical device regulation).
-- **ONNX Runtime error handling**: No try/except around session creation or inference. GPU OOM, driver mismatch, or engine incompatibility will produce raw Python exceptions.
+- **Structured logging (still open)**: all pipeline progress is `print()`. Production should move to Python `logging` with levels (planned as the next robustness phase). Note that failures **are** now handled: session creation and inference are wrapped in a typed-error taxonomy (`nninfe/common/errors.py`) mapped to distinct process exit codes, and in batch mode a failing image is isolated (logged, marked `{name}.failed`) so the run continues — see [Input / Output Formats](#input--output-formats).
 
 ---
 
