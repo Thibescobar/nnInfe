@@ -1,6 +1,7 @@
 """ONNX Runtime session helpers."""
 
 import ctypes
+import logging
 import os
 import sys
 import sysconfig
@@ -9,6 +10,26 @@ from typing import Dict, List
 
 import numpy as np
 import onnxruntime as ort
+
+from nninfe.common.errors import InferenceError, SessionError
+
+logger = logging.getLogger(__name__)
+
+
+def _ort_exception_types() -> tuple:
+    """The exception classes ONNX Runtime raises (``Fail``, ``InvalidArgument``,
+    ``InvalidProtobuf``, ``NoSuchFile``, …). They are collected dynamically from ORT's pybind
+    module because — verified empirically — they subclass ``Exception`` *directly* (not
+    ``RuntimeError``) and share no common base, so they cannot be caught by a stdlib base class.
+    Collecting the whole module also stays correct if ORT adds a class in a future version."""
+    try:
+        from onnxruntime.capi import onnxruntime_pybind11_state as _state
+    except Exception:
+        return ()
+    return tuple(o for o in vars(_state).values() if isinstance(o, type) and issubclass(o, Exception))
+
+
+_ORT_EXCEPTIONS = _ort_exception_types()
 
 BACKENDS = {
     "cpu": ["CPUExecutionProvider"],
@@ -97,14 +118,20 @@ def create_session(
         else:
             provider_options.append({})
 
-    session = ort.InferenceSession(
-        model_path,
-        sess_options=opts,
-        providers=providers,
-        provider_options=provider_options,
-    )
+    try:
+        session = ort.InferenceSession(
+            model_path,
+            sess_options=opts,
+            providers=providers,
+            provider_options=provider_options,
+        )
+    except (*_ORT_EXCEPTIONS, OSError) as exc:
+        # Expected operational failures: malformed/missing model, provider unavailable,
+        # driver/engine mismatch. Programming bugs are left to propagate (-> EXIT_RUNTIME). The
+        # message stays sober (backend only, no raw cause) — the cause is chained for the logs.
+        raise SessionError(f"failed to create ONNX Runtime session (backend={backend})") from exc
     actual = session.get_providers()
-    print(f"      ONNX Runtime providers: {actual}\n", flush=True)
+    logger.info(f"      ONNX Runtime providers: {actual}")
     return session
 
 
@@ -114,7 +141,12 @@ def run_inference(
     anchors_batch: np.ndarray,
 ) -> list:
     """Run ONNX inference and return raw outputs."""
-    return session.run(None, {"images": input_array, "anchors": anchors_batch})
+    try:
+        return session.run(None, {"images": input_array, "anchors": anchors_batch})
+    except _ORT_EXCEPTIONS as exc:
+        # Expected ORT execution failures (GPU OOM, engine incompatibility, invalid binding).
+        # Bugs on our side are left to propagate as EXIT_RUNTIME rather than masked here.
+        raise InferenceError("ONNX inference failed") from exc
 
 
 def parse_outputs(outputs: list, batch_size: int) -> List[Dict[str, np.ndarray]]:
