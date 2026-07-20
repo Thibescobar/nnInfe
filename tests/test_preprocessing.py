@@ -140,6 +140,11 @@ class TestPreprocessImage:
                 "std": 50.0,
             },
         }
+        # Verbose progress is emitted via the 'nninfe' logger; bind its handler to the (capsys-)
+        # captured stdout so the assertions below see the same lines the terminal would show.
+        from nninfe.common.logging_setup import configure_logging
+        configure_logging(force=True)
+
         preprocess_image(nifti_path, plan, verbose=True)
         captured = capsys.readouterr()
         assert "original" in captured.out
