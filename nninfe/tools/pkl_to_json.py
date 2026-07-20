@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Convert plan_inference.pkl to a JSON file readable by C++ (nlohmann::json).
 
-Only extracts the fields used by nninfe_inference_sw.py:
+Only extracts the fields used by the detection pipeline (nninfe/infer_detection.py):
   - patch_size
   - target_spacing (ZYX order)
     - transpose_forward / transpose_backward (if present)

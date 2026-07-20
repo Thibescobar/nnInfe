@@ -385,45 +385,48 @@ class TestMain:
                 "--output-dir", str(tmp_path / "out"),
             ],
         ):
-            with pytest.raises(SystemExit):
+            with pytest.raises(SystemExit) as exc:
                 main()
+        from nninfe.common.errors import EXIT_USAGE
+        assert exc.value.code == EXIT_USAGE
 
     @patch("sys.argv", new_callable=list)
-    def test_main_exits(self, mock_argv, tmp_path):
+    def test_main_exits(self, mock_argv, tmp_path, capsys):
+        """Usage/config errors exit with EXIT_USAGE (2) and print a clean message to stderr
+        (distinct from a programming bug, which would exit 1 with a traceback)."""
+        from nninfe.common.errors import EXIT_USAGE
         from nninfe.infer_detection import main
+
+        def _expect_usage(expected_msg):
+            with pytest.raises(SystemExit) as exc:
+                main()
+            assert exc.value.code == EXIT_USAGE
+            assert expected_msg in capsys.readouterr().err
 
         model_path = tmp_path / "model.onnx"
         plan_path = tmp_path / "plan.json"
 
         # Missing model
         mock_argv[:] = ["nninfe-det", "--model-path", str(model_path), "--plan-path", str(plan_path)]
-        with pytest.raises(SystemExit) as exc:
-            main()
-        assert "model not found" in str(exc.value)
+        _expect_usage("model not found")
 
         # Invalid model ext
         model_txt = tmp_path / "model.txt"
         model_txt.write_text("")
         mock_argv[:] = ["nninfe-det", "--model-path", str(model_txt), "--plan-path", str(plan_path)]
-        with pytest.raises(SystemExit) as exc:
-            main()
-        assert "must be .onnx" in str(exc.value)
+        _expect_usage("must be .onnx")
 
         # Valid model, missing plan
         model_onnx = tmp_path / "actual_model.onnx"
         model_onnx.write_text("")
         mock_argv[:] = ["nninfe-det", "--model-path", str(model_onnx), "--plan-path", str(plan_path)]
-        with pytest.raises(SystemExit) as exc:
-            main()
-        assert "plan not found" in str(exc.value)
+        _expect_usage("plan not found")
 
         # Invalid plan ext
         plan_txt = tmp_path / "plan.txt"
         plan_txt.write_text("")
         mock_argv[:] = ["nninfe-det", "--model-path", str(model_onnx), "--plan-path", str(plan_txt)]
-        with pytest.raises(SystemExit) as exc:
-            main()
-        assert "must be .json" in str(exc.value)
+        _expect_usage("must be .json")
 
         # Missing output dir
         actual_plan = tmp_path / "actual_plan.json"
@@ -431,27 +434,21 @@ class TestMain:
         nifti = tmp_path / "img.nii.gz"
         nifti.write_text("")
         mock_argv[:] = ["nninfe-det", "--model-path", str(model_onnx), "--plan-path", str(actual_plan), "--image-path", str(nifti)]
-        with pytest.raises(SystemExit) as exc:
-            main()
-        assert "output-dir is required" in str(exc.value)
+        _expect_usage("output-dir is required")
 
         # Invalid overlap
         mock_argv[:] = [
             "nninfe-det", "--model-path", str(model_onnx), "--plan-path", str(actual_plan),
             "--image-path", str(nifti), "--output-dir", str(tmp_path), "--overlap", "1.5"
         ]
-        with pytest.raises(SystemExit) as exc:
-            main()
-        assert "overlap must be in" in str(exc.value)
+        _expect_usage("overlap must be in")
 
         # Invalid score thresh
         mock_argv[:] = [
             "nninfe-det", "--model-path", str(model_onnx), "--plan-path", str(actual_plan),
             "--image-path", str(nifti), "--output-dir", str(tmp_path), "--score-thresh", "2.0"
         ]
-        with pytest.raises(SystemExit) as exc:
-            main()
-        assert "score-thresh must be in" in str(exc.value)
+        _expect_usage("score-thresh must be in")
 
     @patch("nninfe.infer_detection.create_session")
     @patch("nninfe.infer_detection.process_single_image")
@@ -492,3 +489,119 @@ class TestMain:
 
         main()
         assert mock_process.call_count == 2
+
+    @patch("nninfe.infer_detection.create_session")
+    @patch("nninfe.infer_detection.process_single_image")
+    @patch("sys.argv", new_callable=list)
+    def test_main_batch_isolates_failures(self, mock_argv, mock_process, mock_create, tmp_path):
+        """One failing image must not abort the batch: the good image is still processed, the
+        bad one gets a {name}.failed sentinel, and the run exits with the partial-failure code."""
+        import json
+
+        from nninfe.common.errors import EXIT_PARTIAL, InferenceError
+        from nninfe.infer_detection import main
+
+        model = tmp_path / "model.onnx"
+        model.write_text("")
+        plan = tmp_path / "plan.json"
+        plan.write_text(json.dumps(_make_plan()))
+
+        d = tmp_path / "imgs"
+        d.mkdir()
+        (d / "1.nii.gz").write_text("")
+        (d / "2.nii.gz").write_text("")
+        out_dir = tmp_path / "out"
+
+        mock_session = MagicMock()
+        mock_session.get_inputs.return_value = [MagicMock(shape=[2])]
+        mock_create.return_value = mock_session
+        # First image fails at inference; second succeeds.
+        mock_process.side_effect = [InferenceError("GPU OOM"), 5]
+
+        mock_argv[:] = [
+            "nninfe-det", "--model-path", str(model), "--plan-path", str(plan),
+            "--image-dir", str(d), "--output-dir", str(out_dir),
+        ]
+
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == EXIT_PARTIAL
+        assert mock_process.call_count == 2  # batch continued past the failure
+        assert (out_dir / "1.failed").exists()
+        assert "InferenceError" in (out_dir / "1.failed").read_text()
+        assert (out_dir / ".done").exists()  # batch-complete marker still written
+        # A per-image manifest is written for both the failed and the successful image.
+        import json
+        failed_manifest = json.loads((out_dir / "1_manifest.json").read_text())
+        assert failed_manifest["outcome"] == "failed"
+        assert failed_manifest["error"]["type"] == "InferenceError"
+        assert failed_manifest["pipeline"] == "detection" and failed_manifest["nninfe_version"]
+        assert json.loads((out_dir / "2_manifest.json").read_text())["outcome"] == "ok"
+
+    @patch("nninfe.infer_detection.create_session")
+    @patch("nninfe.infer_detection.process_single_image")
+    @patch("sys.argv", new_callable=list)
+    def test_main_batch_bug_exits_runtime_not_partial(self, mock_argv, mock_process, mock_create, tmp_path):
+        """Policy (a): an unexpected error (programming bug) on one image is isolated so the batch
+        still finishes the others, but it forces EXIT_RUNTIME — never the benign partial code —
+        and its sentinel is marked as an internal error (no raw cause / PHI persisted)."""
+        import json
+
+        from nninfe.common.errors import EXIT_RUNTIME
+        from nninfe.infer_detection import main
+
+        model = tmp_path / "model.onnx"
+        model.write_text("")
+        plan = tmp_path / "plan.json"
+        plan.write_text(json.dumps(_make_plan()))
+
+        d = tmp_path / "imgs"
+        d.mkdir()
+        (d / "1.nii.gz").write_text("")
+        (d / "2.nii.gz").write_text("")
+        out_dir = tmp_path / "out"
+
+        mock_session = MagicMock()
+        mock_session.get_inputs.return_value = [MagicMock(shape=[2])]
+        mock_create.return_value = mock_session
+        # First image hits a genuine code bug; second succeeds.
+        mock_process.side_effect = [TypeError("tensor.shpae typo"), 4]
+
+        mock_argv[:] = [
+            "nninfe-det", "--model-path", str(model), "--plan-path", str(plan),
+            "--image-dir", str(d), "--output-dir", str(out_dir),
+        ]
+
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == EXIT_RUNTIME  # bug, not masked as partial
+        assert mock_process.call_count == 2    # batch still continued
+        failed_text = (out_dir / "1.failed").read_text()
+        assert "InternalError" in failed_text
+        assert "shpae" not in failed_text      # raw cause not persisted
+
+    @patch("nninfe.infer_detection.create_session")
+    @patch("sys.argv", new_callable=list)
+    def test_main_session_failure_is_fatal(self, mock_argv, mock_create, tmp_path):
+        """A SessionError at session creation is fatal and exits with the session exit code."""
+        import json
+
+        from nninfe.common.errors import EXIT_SESSION, SessionError
+        from nninfe.infer_detection import main
+
+        model = tmp_path / "model.onnx"
+        model.write_text("")
+        plan = tmp_path / "plan.json"
+        plan.write_text(json.dumps(_make_plan()))
+        nifti = tmp_path / "img.nii.gz"
+        nifti.write_text("")
+
+        mock_create.side_effect = SessionError("driver mismatch")
+        mock_argv[:] = [
+            "nninfe-det", "--model-path", str(model), "--plan-path", str(plan),
+            "--image-path", str(nifti), "--output-dir", str(tmp_path / "out"),
+        ]
+
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == EXIT_SESSION

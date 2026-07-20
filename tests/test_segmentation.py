@@ -124,7 +124,7 @@ def test_process_single_image_exports_mask(tmp_path):
         overlap=0.5,
     )
     assert Path(out).exists()
-    assert (output_dir / ".done").exists()
+    assert (output_dir / "seg.done").exists()
 
 
 def test_process_single_image_pads_small_volume(tmp_path):
@@ -245,6 +245,52 @@ class TestSegmentationMain:
         assert kwargs["pad_value"] == "min"
 
     @patch("nninfe.infer_segmentation.create_session")
+    @patch("nninfe.infer_segmentation.process_single_image")
+    @patch("sys.argv", new_callable=list)
+    def test_main_batch_isolates_failures(self, mock_argv, mock_process, mock_create, tmp_path):
+        """One failing image must not abort the segmentation batch: the run continues, the bad
+        image gets a {name}.failed sentinel, and the process exits with the partial-failure code."""
+        from nninfe.common.errors import EXIT_PARTIAL, ImageIOError
+
+        model_path = tmp_path / "model.onnx"
+        model_path.write_text("")
+        plans = {
+            "foreground_intensity_properties_per_channel": {
+                "0": {"percentile_00_5": 0.0, "percentile_99_5": 100.0, "mean": 50.0, "std": 10.0}
+            },
+            "configurations": {
+                "3d_fullres": {"patch_size": [64, 64, 64], "spacing": [1.0, 1.0, 1.0],
+                               "normalization_schemes": ["ZScoreNormalization"]}
+            },
+        }
+        plan_path = tmp_path / "plans.json"
+        plan_path.write_text(json.dumps(plans))
+
+        img_dir = tmp_path / "imgs"
+        img_dir.mkdir()
+        (img_dir / "a.nii.gz").write_text("")
+        (img_dir / "b.nii.gz").write_text("")
+        output_dir = tmp_path / "out"
+
+        mock_session = MagicMock()
+        mock_session.get_inputs.return_value = [MagicMock(shape=[1, 1, 64, 64, 64])]
+        mock_create.return_value = mock_session
+        mock_process.side_effect = [ImageIOError("unreadable series"), str(output_dir / "b_seg.nii.gz")]
+
+        mock_argv[:] = [
+            "nninfe-seg", "--model-path", str(model_path), "--plan-path", str(plan_path),
+            "--image-dir", str(img_dir), "--output-dir", str(output_dir),
+        ]
+
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == EXIT_PARTIAL
+        assert mock_process.call_count == 2
+        failed = list(output_dir.glob("*.failed"))
+        assert len(failed) == 1 and "ImageIOError" in failed[0].read_text()
+        assert (output_dir / ".done").exists()
+
+    @patch("nninfe.infer_segmentation.create_session")
     @patch("sys.argv", new_callable=list)
     def test_main_build_engine_only(self, mock_argv, mock_create, tmp_path):
         model_path = tmp_path / "model.onnx"
@@ -288,7 +334,9 @@ class TestSegmentationMain:
         mock_create.assert_called_once_with(str(model_path), backend="trt", trt_fp16=True)
 
     @patch("sys.argv", new_callable=list)
-    def test_main_missing_model_exits(self, mock_argv, tmp_path):
+    def test_main_missing_model_exits(self, mock_argv, tmp_path, capsys):
+        from nninfe.common.errors import EXIT_USAGE
+
         mock_argv[:] = [
             "nninfe-seg",
             "--model-path", str(tmp_path / "missing.onnx"),
@@ -296,5 +344,6 @@ class TestSegmentationMain:
         ]
         with pytest.raises(SystemExit) as exc:
             main()
-        assert "not found" in str(exc.value)
+        assert exc.value.code == EXIT_USAGE
+        assert "not found" in capsys.readouterr().err
 
