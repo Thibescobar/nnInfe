@@ -1,5 +1,6 @@
 """Image preprocessing helpers."""
 
+import logging
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
@@ -7,6 +8,9 @@ import numpy as np
 import SimpleITK as sitk
 
 from nninfe.common.io import read_dicom_series, read_image, read_image_metadata
+from nninfe.common.validation import validate_input_image
+
+logger = logging.getLogger(__name__)
 
 
 def pad_volume_to_patch_size(
@@ -128,6 +132,7 @@ def preprocess_image(
         image, source_files = read_dicom_series(image_path)
     else:
         image = read_image(image_path)
+    validate_input_image(image)  # cheap O(1) geometry guard before any processing
     original_metadata = {
         "size_xyz": image.GetSize(),
         "spacing_xyz": image.GetSpacing(),
@@ -139,8 +144,8 @@ def preprocess_image(
     if verbose:
         _sf = sitk.StatisticsImageFilter()
         _sf.Execute(image)
-        print(f"      original  size (XYZ): {image.GetSize()}  spacing: {image.GetSpacing()}", flush=True)
-        print(f"                intensity range: [{_sf.GetMinimum():.1f}, {_sf.GetMaximum():.1f}]  mean: {_sf.GetMean():.1f}  std: {_sf.GetSigma():.1f}", flush=True)
+        logger.info(f"      original  size (XYZ): {image.GetSize()}  spacing: {image.GetSpacing()}")
+        logger.info(f"                intensity range: [{_sf.GetMinimum():.1f}, {_sf.GetMaximum():.1f}]  mean: {_sf.GetMean():.1f}  std: {_sf.GetSigma():.1f}")
 
     image = resample_image(
         image,
@@ -150,8 +155,8 @@ def preprocess_image(
     if verbose:
         _sf = sitk.StatisticsImageFilter()
         _sf.Execute(image)
-        print(f"      resampled size (XYZ): {image.GetSize()}  spacing: {tuple(round(s, 4) for s in image.GetSpacing())}", flush=True)
-        print(f"                intensity range: [{_sf.GetMinimum():.1f}, {_sf.GetMaximum():.1f}]  mean: {_sf.GetMean():.1f}  std: {_sf.GetSigma():.1f}", flush=True)
+        logger.info(f"      resampled size (XYZ): {image.GetSize()}  spacing: {tuple(round(s, 4) for s in image.GetSpacing())}")
+        logger.info(f"                intensity range: [{_sf.GetMinimum():.1f}, {_sf.GetMaximum():.1f}]  mean: {_sf.GetMean():.1f}  std: {_sf.GetSigma():.1f}")
 
     intensity = plan_inference["intensity_properties"]
     image = clip_image(
@@ -162,12 +167,12 @@ def preprocess_image(
     if verbose:
         _sf = sitk.StatisticsImageFilter()
         _sf.Execute(image)
-        print(f"      clipped   intensity range: [{_sf.GetMinimum():.1f}, {_sf.GetMaximum():.1f}]  (percentiles [{intensity['percentile_00_5']:.1f}, {intensity['percentile_99_5']:.1f}])", flush=True)
+        logger.info(f"      clipped   intensity range: [{_sf.GetMinimum():.1f}, {_sf.GetMaximum():.1f}]  (percentiles [{intensity['percentile_00_5']:.1f}, {intensity['percentile_99_5']:.1f}])")
 
     image = normalize_image(image, mean=intensity["mean"], std=intensity["std"])
     if verbose:
         _sf = sitk.StatisticsImageFilter()
         _sf.Execute(image)
-        print(f"      normalized intensity range: [{_sf.GetMinimum():.2f}, {_sf.GetMaximum():.2f}]  mean: {_sf.GetMean():.2f}  std: {_sf.GetSigma():.2f}", flush=True)
+        logger.info(f"      normalized intensity range: [{_sf.GetMinimum():.2f}, {_sf.GetMaximum():.2f}]  mean: {_sf.GetMean():.2f}  std: {_sf.GetSigma():.2f}")
 
     return image, original_metadata
