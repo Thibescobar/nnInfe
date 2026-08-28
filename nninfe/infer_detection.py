@@ -1,6 +1,5 @@
 """nnDet ONNX inference pipeline (detection) built on shared modules."""
 
-import argparse
 import json
 import logging
 import math
@@ -15,7 +14,7 @@ import numpy as np
 import SimpleITK as sitk
 from pydicom.errors import InvalidDicomError
 
-from nninfe.common.cli import collect_image_inputs
+from nninfe.common.cli import collect_image_inputs, log_parameters, make_parser
 from nninfe.common.errors import (
     EXIT_PARTIAL,
     EXIT_RUNTIME,
@@ -31,7 +30,14 @@ from nninfe.common.io import write_detection_dicom_sr
 from nninfe.common.logging_setup import configure_logging
 from nninfe.common.manifest import build_run_context, classify_error, write_run_manifest
 from nninfe.common.preprocessing import pad_volume_to_patch_size, preprocess_image, resample_mask_to_reference
-from nninfe.common.session import BACKENDS, create_session, parse_outputs, run_inference
+from nninfe.common.session import (
+    BACKENDS,
+    build_only_completion_message,
+    create_session,
+    parse_outputs,
+    run_inference,
+    session_creation_message,
+)
 from nninfe.common.sliding_window import compute_patch_positions, extract_patch
 from nninfe.detection.anchors import compute_anchors
 from nninfe.detection.export import (
@@ -60,9 +66,7 @@ logger = logging.getLogger(__name__)
 
 def main() -> None:
     configure_logging()
-    parser = argparse.ArgumentParser(
-        description="nnDet ONNX inference pipeline (sliding window)",
-    )
+    parser = make_parser("nnDet ONNX inference pipeline (sliding window)")
 
     parser.add_argument("--model-path", required=True, help="Path to model_onnx.onnx")
     parser.add_argument("--plan-path", required=True, help="Path to plan_inference.json")
@@ -74,17 +78,17 @@ def main() -> None:
         "--overlap",
         type=float,
         default=0.5,
-        help="Overlap between patches as proportion in [0,1) (default: 0.5)",
+        help="Overlap between patches as proportion in [0,1)",
     )
 
-    parser.add_argument("--score-thresh", type=float, default=0.5, help="Score threshold (default: 0.5)")
-    parser.add_argument("--min-size-mm", type=float, default=2.0, help="Min box size in mm (default: 2.0)")
-    parser.add_argument("--iou-threshold", type=float, default=None, help="NMS IoU threshold (default: from plan)")
+    parser.add_argument("--score-thresh", type=float, default=0.5, help="Score threshold")
+    parser.add_argument("--min-size-mm", type=float, default=2.0, help="Min box size in mm")
+    parser.add_argument("--iou-threshold", type=float, default=None, help="NMS IoU threshold (read from plan when omitted)")
     parser.add_argument(
         "--nms-backend",
         choices=["numpy", "nndet"],
         default="numpy",
-        help="NMS implementation (default: numpy)",
+        help="NMS implementation",
     )
     parser.add_argument(
         "--no-global-nms",
@@ -94,14 +98,14 @@ def main() -> None:
     parser.add_argument(
         "--pad-value",
         default="0.0",
-        help="Padding value to use. Can be a number or 'min' to use the minimum value of the image minus 1 (default: 0.0)",
+        help="Padding value to use. Can be a number or 'min' to use the minimum value of the image minus 1",
     )
 
     parser.add_argument(
         "--backend",
         choices=list(BACKENDS.keys()),
         default="cpu",
-        help="Inference backend: cpu, openvino, tensorrt (default: cpu)",
+        help="Inference backend",
     )
     parser.add_argument(
         "--trt-fp16",
@@ -111,7 +115,7 @@ def main() -> None:
     parser.add_argument(
         "--build-engine-only",
         action="store_true",
-        help="Build TRT engine cache and exit (no inference)",
+        help="Initialize the backend session and exit; with TRT, build or load the engine cache",
     )
     parser.add_argument(
         "--export-pkl",
@@ -123,7 +127,7 @@ def main() -> None:
         choices=["json", "nifti", "dicom-sr", "both"],
         default="nifti",
         help="Result format; the boxes JSON is always written (and PKL if --export-pkl). "
-        "json = JSON only; nifti (default) adds the mask NIfTI + CSV; dicom-sr adds a DICOM "
+        "json = JSON only; nifti adds the mask NIfTI + CSV; dicom-sr adds a DICOM "
         "Structured Report (requires DICOM input); both = nifti + dicom-sr",
     )
 
@@ -158,35 +162,16 @@ def main() -> None:
             f"--image-path is not a directory: {args.image_path}"
         )
 
-    defaults = {a.dest: a.default for a in parser._actions if a.default is not argparse.SUPPRESS}
-    logger.info("Parameters:")
-    for name, value in vars(args).items():
-        tag = ""
-        if name in defaults and value == defaults[name]:
-            if name == "iou_threshold":
-                tag = "  (auto: from plan)"
-            else:
-                tag = "  (default)"
-        logger.info(f"  --{name.replace('_', '-')} : {value}{tag}")
+    log_parameters(logger, parser, args, dynamic_defaults={"iou_threshold": "from plan"})
 
+    logger.info("Loading plan …")
     with open(args.plan_path, "r") as f:
         plan_inference = json.load(f)
     logger.info(f"      config loaded from: {args.plan_path}")
 
     patch_size = tuple(plan_inference["patch_size"])
 
-    if args.backend == "trt":
-        precision = "fp16" if args.trt_fp16 else "fp32"
-        cache_dir = Path(args.model_path).parent / f"trt_engine_cache_{precision}"
-        has_cache = cache_dir.exists() and any(cache_dir.glob("*.engine"))
-        if has_cache:
-            logger.info(f"      Loading TensorRT session ({precision}, cached engines from {cache_dir}) ...")
-        else:
-            logger.info(
-                "      Creating TensorRT session "
-                f"({precision}, no cache found, compiling engines -- this may take several minutes) ..."
-            )
-
+    logger.info(session_creation_message(args.model_path, args.backend, args.trt_fp16))
     t_session = time.time()
     try:
         session = create_session(args.model_path, args.backend, args.trt_fp16)
@@ -195,10 +180,10 @@ def main() -> None:
         logger.error(f"FATAL: {exc}")
         sys.exit(exc.exit_code)
     batch_size: int = session.get_inputs()[0].shape[0]
-    logger.info(f"      Session ready  ({time.time() - t_session:.2f}s)")
+    logger.info(f"Session ready ({time.time() - t_session:.2f}s)")
 
     if args.build_engine_only:
-        logger.info("Engine built and cached. Exiting.")
+        logger.info(build_only_completion_message(args.backend))
         return
 
     iou_threshold = args.iou_threshold
@@ -206,7 +191,7 @@ def main() -> None:
         iou_threshold = plan_inference["inference_plan"]["model_iou"]
         logger.info(f"      iou-threshold not specified, using plan value: {iou_threshold}")
 
-    logger.info("[1/5] Computing anchors ...")
+    logger.info("[1/5] Computing anchors …")
     t0 = time.time()
     anchors_batch = compute_anchors(plan_inference, patch_size, batch_size)
     logger.info(f"      anchors shape: {anchors_batch.shape}  ({time.time() - t0:.2f}s)")
@@ -345,7 +330,7 @@ def process_single_image(
     elif image_name.endswith(".nii"):
         image_name = image_name[:-4]
 
-    logger.info("[2/5] Preprocessing image ...")
+    logger.info("[2/5] Preprocessing image …")
     t0 = time.time()
     with translate_errors(ImageIOError, _READ_ERRORS, "failed to read or preprocess input image"):
         preprocessed, orig_meta = preprocess_image(image_path, plan_inference)
@@ -360,7 +345,7 @@ def process_single_image(
         )
     padded_shape = volume_padded.shape
 
-    logger.info("[3/5] Building sliding window positions ...")
+    logger.info("[3/5] Building sliding window positions …")
     t0 = time.time()
     positions, step_sizes = compute_patch_positions(padded_shape, patch_size, overlap)
     actual_overlap = tuple(round(1.0 - s / p, 4) if p > 0 else 0.0 for s, p in zip(step_sizes, patch_size))
@@ -372,7 +357,7 @@ def process_single_image(
     )
     logger.info(f"      {n_patches} patches, {n_batches} batches (batch_size={batch_size})  ({time.time() - t0:.2f}s)")
 
-    logger.info("[4/5] Running inference ...")
+    logger.info("[4/5] Running inference …")
     t0 = time.time()
 
     all_detections: List[Dict[str, np.ndarray]] = []
@@ -431,7 +416,7 @@ def process_single_image(
 
     logger.info(f"      inference done ({time.time() - t0:.2f}s)")
 
-    logger.info("[5/5] Merging detections ...")
+    logger.info("[5/5] Merging detections …")
     t0 = time.time()
     merged = merge_detections(all_detections)
     logger.info(f"      total detections before global NMS: {len(merged['boxes'])}")
@@ -524,5 +509,5 @@ def process_single_image(
 
 if __name__ == "__main__":
     configure_logging()
-    logger.info("Standalone nnDetection ONNX inference pipeline...")
+    logger.info("Standalone nnDetection ONNX inference pipeline…")
     main()

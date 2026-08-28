@@ -10,7 +10,7 @@ import numpy as np
 import SimpleITK as sitk
 
 from nninfe.common.errors import InferenceError
-from nninfe.common.session import _ORT_EXCEPTIONS
+from nninfe.common.session import ort_exception_types
 from nninfe.common.sliding_window import compute_patch_positions, extract_patch
 
 logger = logging.getLogger(__name__)
@@ -115,7 +115,7 @@ def _run_segmentation_batch(
     input_array = np.stack([p[np.newaxis, ...] for p in patches], axis=0).astype(np.float32, copy=False)
     try:
         outputs = session.run(None, {input_name: input_array})
-    except _ORT_EXCEPTIONS as exc:
+    except ort_exception_types() as exc:
         # Expected ORT execution failures (GPU OOM, engine incompatibility, invalid binding).
         # Bugs on our side are left to propagate as EXIT_RUNTIME rather than masked here.
         raise InferenceError("ONNX inference failed") from exc

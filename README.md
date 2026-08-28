@@ -101,10 +101,12 @@ pip install -e "<extra>"
 
 > **GPU automatic linkage:** The `.[gpu]` extra (installed by the base setup above) is the **unified CUDA 12 stack** used identically on Linux and Windows: `onnxruntime-gpu`, the CUDA 12 / cuDNN 9 runtime wheels, and a compatible `tensorrt-cu12` (pinned `<11` — rationale in [pyproject.toml](pyproject.toml)). No `LD_LIBRARY_PATH` and no conda activation script are needed: `create_session()` makes these libraries discoverable in-process at runtime (see `_preload_gpu_libraries` in `nninfe/common/session.py`) by calling ONNX Runtime's cross-platform `preload_dlls()` for CUDA + cuDNN and placing `tensorrt_libs` on the native loader search path (prepended to `PATH` on Windows, preloaded with RUNPATH resolution on Linux). Both the `cuda` and `trt` backends have been verified on Linux and Windows. Check the `ONNX Runtime providers` line printed at session creation.
 
-> **GPU Linux fallback (rarely needed):** on a hardened or non-standard loader configuration where the wheel's RUNPATH is ignored, the arch-specific `libnvinfer_builder_resource_*.so` may not be found and the TensorRT execution provider falls back to CPU. If that happens, add the wheel's `tensorrt_libs` to `LD_LIBRARY_PATH`:
+> **GPU Linux provider loading (rarely needed):** on a hardened or non-standard loader configuration where the wheel's RUNPATH is ignored, the arch-specific `libnvinfer_builder_resource_*.so` may not be found. nninfe rejects the session if the requested TensorRT/CUDA provider is unavailable instead of silently continuing on CPU. In that case, add the wheel's `tensorrt_libs` to `LD_LIBRARY_PATH`:
 > ```bash
 > export LD_LIBRARY_PATH="$(python -c 'import os,sysconfig;print(os.path.join(sysconfig.get_paths()["purelib"],"tensorrt_libs"))'):$LD_LIBRARY_PATH"
 > ```
+
+> **ONNX Runtime 1.23.x on Linux:** importing the GPU wheel can print `GPU device discovery failed` when `/sys/class/drm` contains a virtual non-PCI adapter such as EVDI. This is an [upstream ONNX Runtime issue](https://github.com/microsoft/onnxruntime/issues/26763). nninfe imports ONNX Runtime lazily, so informational commands such as `--help` do not trigger device discovery. During real session creation, use the reported provider list as the authority; nninfe exits with a session error if the requested primary provider is absent.
 
 > **Why Python ≥ 3.10?** The GPU backends use the CUDA 12 wheels, which require `onnxruntime-gpu` ≥ 1.20 — and ONNX Runtime **dropped Python 3.9 at v1.20** (3.9 caps at ORT 1.19.2). The project therefore requires Python ≥ 3.10 (`requires-python = ">=3.10"`). `--nms-backend nndet` could need some extra work to be installed with Python > 3.9.
 
@@ -246,7 +248,7 @@ nninfe-seg \
 |----------|---------|-------------|
 | `--backend` | `cpu` | Inference backend: `cpu`, `openvino`, `cuda`, `trt`. |
 | `--trt-fp16` | off | Enable FP16 inference for TensorRT. |
-| `--build-engine-only` | off | Build TRT engine cache and exit (no image/output needed). |
+| `--build-engine-only` | off | Initialize the selected backend session and exit; with TRT, build or load the engine cache (no image/output needed). |
 
 ### `nninfe-seg` options
 
