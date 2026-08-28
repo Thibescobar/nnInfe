@@ -1,6 +1,5 @@
 """nnUNet ONNX segmentation inference pipeline using shared common modules."""
 
-import argparse
 import json
 import logging
 import os
@@ -12,7 +11,7 @@ from pathlib import Path
 import SimpleITK as sitk
 from pydicom.errors import InvalidDicomError
 
-from nninfe.common.cli import collect_image_inputs
+from nninfe.common.cli import collect_image_inputs, log_parameters, make_parser
 from nninfe.common.errors import (
     EXIT_PARTIAL,
     EXIT_RUNTIME,
@@ -28,7 +27,12 @@ from nninfe.common.io import write_segmentation_dicom_seg
 from nninfe.common.logging_setup import configure_logging
 from nninfe.common.manifest import build_run_context, classify_error, write_run_manifest
 from nninfe.common.preprocessing import pad_volume_to_patch_size, preprocess_image, resample_mask_to_reference
-from nninfe.common.session import BACKENDS, create_session
+from nninfe.common.session import (
+    BACKENDS,
+    build_only_completion_message,
+    create_session,
+    session_creation_message,
+)
 from nninfe.segmentation.pipeline import (
     build_reference_mask,
     crop_volume_to_shape,
@@ -173,9 +177,7 @@ def process_single_image(
 
 def main() -> None:
     configure_logging()
-    parser = argparse.ArgumentParser(
-        description="nnUNet ONNX segmentation inference pipeline (sliding window)",
-    )
+    parser = make_parser("nnUNet ONNX segmentation inference pipeline (sliding window)")
     parser.add_argument("--model-path", required=True, help="Path to ONNX model")
     parser.add_argument("--plan-path", required=True, help="Path to nnUNet plans.json")
     parser.add_argument("--configuration", default="3d_fullres", help="nnUNet plan configuration name")
@@ -186,33 +188,33 @@ def main() -> None:
     parser.add_argument(
         "--pad-value",
         default="0.0",
-        help="Padding value to use. Can be a number or 'min' to use the minimum value of the image minus 1 (default: 0.0)",
+        help="Padding value to use. Can be a number or 'min' to use the minimum value of the image minus 1",
     )
     parser.add_argument(
         "--output-format",
         choices=["nifti", "dicom-seg", "both"],
         default="nifti",
-        help="Result format: nifti (default), dicom-seg (DICOM SEG referencing the source series, "
+        help="Result format: nifti, dicom-seg (DICOM SEG referencing the source series, "
         "requires DICOM input), or both",
     )
     parser.add_argument(
         "--seg-encoding",
         choices=["binary", "labelmap"],
         default="binary",
-        help="DICOM SEG representation: binary (default, widest viewer support) or labelmap "
+        help="DICOM SEG representation: binary (widest viewer support) or labelmap "
         "(compact, size independent of class count — better for many-class masks, needs a newer viewer)",
     )
     parser.add_argument(
         "--backend",
         choices=list(BACKENDS.keys()),
         default="cpu",
-        help="Inference backend: cpu, openvino, cuda, trt",
+        help="Inference backend",
     )
     parser.add_argument("--trt-fp16", action="store_true", help="Enable FP16 for TensorRT backend")
     parser.add_argument(
         "--build-engine-only",
         action="store_true",
-        help="Build backend session (and TRT cache) then exit",
+        help="Initialize the backend session and exit; with TRT, build or load the engine cache",
     )
 
     args = parser.parse_args()
@@ -233,13 +235,7 @@ def main() -> None:
             f"--image-path is not a directory: {args.image_path}"
         )
 
-    defaults = {a.dest: a.default for a in parser._actions if a.default is not argparse.SUPPRESS}
-    logger.info("Parameters:")
-    for name, value in vars(args).items():
-        tag = ""
-        if name in defaults and value == defaults[name]:
-            tag = "  (default)"
-        logger.info(f"  --{name.replace('_', '-')} : {value}{tag}")
+    log_parameters(logger, parser, args)
 
     logger.info("Loading plan …")
     with open(plan_path, "r") as f:
@@ -248,19 +244,7 @@ def main() -> None:
     plan_patch_size = tuple(plan_inference["patch_size"])
     logger.info(f"      config loaded from: {args.plan_path}")
 
-    if args.backend == "trt":
-        precision = "fp16" if args.trt_fp16 else "fp32"
-        cache_dir = Path(args.model_path).parent / f"trt_engine_cache_{precision}"
-        has_cache = cache_dir.exists() and any(cache_dir.glob("*.engine"))
-        if has_cache:
-            logger.info(f"      Loading TensorRT session ({precision}, cached engines from {cache_dir}) …")
-        else:
-            logger.info(
-                "      Creating TensorRT session "
-                f"({precision}, no cache found, compiling engines — this may take several minutes) …"
-            )
-
-    logger.info("Creating ONNX Runtime session …")
+    logger.info(session_creation_message(str(model_path), args.backend, args.trt_fp16))
     t0 = time.time()
     try:
         session = create_session(str(model_path), backend=args.backend, trt_fp16=args.trt_fp16)
@@ -272,7 +256,7 @@ def main() -> None:
     logger.info(f"Session ready ({time.time() - t0:.2f}s)")
 
     if args.build_engine_only:
-        logger.info("Engine/session initialized. Exiting.")
+        logger.info(build_only_completion_message(args.backend))
         return
 
     image_paths = collect_image_inputs(args.image_path, args.image_dir)

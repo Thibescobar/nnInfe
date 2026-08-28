@@ -5,7 +5,14 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from nninfe.common.session import create_session, parse_outputs, run_inference
+from nninfe.common.errors import SessionError
+from nninfe.common.session import (
+    build_only_completion_message,
+    create_session,
+    parse_outputs,
+    run_inference,
+    session_creation_message,
+)
 from nninfe.detection.postprocessing import apply_nms, nms_nndet, postprocess
 
 
@@ -64,6 +71,40 @@ class TestCreateSession:
         ov_opts = [o for o in provider_options if "device_type" in o]
         assert len(ov_opts) == 1
         assert ov_opts[0]["device_type"] == "CPU"
+
+    @patch("nninfe.common.session.ort")
+    def test_requested_provider_must_be_active(self, mock_ort):
+        mock_session = MagicMock()
+        mock_session.get_providers.return_value = ["CPUExecutionProvider"]
+        mock_ort.InferenceSession.return_value = mock_session
+        mock_ort.SessionOptions.return_value = MagicMock()
+
+        with pytest.raises(SessionError, match="requested backend provider is unavailable"):
+            create_session("/fake/model.onnx", backend="cuda")
+
+
+class TestSessionMessages:
+    def test_cpu_messages_do_not_claim_an_engine_cache(self):
+        assert session_creation_message("/models/model.onnx", "cpu") == (
+            "Creating ONNX Runtime session (backend=cpu) …"
+        )
+        assert "no engine cache required" in build_only_completion_message("cpu")
+
+    def test_trt_cache_miss_message(self, tmp_path):
+        model = tmp_path / "model.onnx"
+        message = session_creation_message(str(model), "trt", trt_fp16=True)
+        assert "backend=trt" in message
+        assert "precision=fp16" in message
+        assert "no TensorRT engine cache found" in message
+        assert build_only_completion_message("trt") == "TensorRT engine cache ready. Exiting."
+
+    def test_trt_cache_hit_message(self, tmp_path):
+        model = tmp_path / "model.onnx"
+        cache = tmp_path / "trt_engine_cache_fp32"
+        cache.mkdir()
+        (cache / "model.engine").write_bytes(b"cached")
+
+        assert "TensorRT engine cache found" in session_creation_message(str(model), "trt")
 
 
 class TestRunInference:
