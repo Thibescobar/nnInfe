@@ -1,19 +1,25 @@
 """ONNX Runtime session helpers."""
 
 import ctypes
+import importlib
 import logging
 import os
 import sys
 import sysconfig
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import numpy as np
-import onnxruntime as ort
 
 from nninfe.common.errors import InferenceError, SessionError
 
 logger = logging.getLogger(__name__)
+
+# ONNX Runtime performs native GPU discovery while its Python module is imported. Keep that import
+# lazy so lightweight CLI operations such as ``nninfe-*- --help`` do not initialize hardware (and
+# do not emit platform discovery warnings).
+ort: Any = None
+_ORT_EXCEPTIONS: tuple = ()
 
 
 def _ort_exception_types() -> tuple:
@@ -23,13 +29,30 @@ def _ort_exception_types() -> tuple:
     ``RuntimeError``) and share no common base, so they cannot be caught by a stdlib base class.
     Collecting the whole module also stays correct if ORT adds a class in a future version."""
     try:
-        from onnxruntime.capi import onnxruntime_pybind11_state as _state
+        _state = importlib.import_module("onnxruntime.capi.onnxruntime_pybind11_state")
     except Exception:
         return ()
     return tuple(o for o in vars(_state).values() if isinstance(o, type) and issubclass(o, Exception))
 
 
-_ORT_EXCEPTIONS = _ort_exception_types()
+def _load_ort() -> Any:
+    """Import ONNX Runtime on first actual backend use, never merely for CLI parsing."""
+    global ort, _ORT_EXCEPTIONS
+    if ort is None:
+        ort = importlib.import_module("onnxruntime")
+    if not _ORT_EXCEPTIONS:
+        _ORT_EXCEPTIONS = _ort_exception_types()
+    return ort
+
+
+def ort_exception_types() -> tuple:
+    """Return the concrete exception classes raised by the installed ONNX Runtime."""
+    global _ORT_EXCEPTIONS
+    # Do not import ORT as a side effect of exception handling. A normal session creation has
+    # already loaded it; direct library callers may also have imported it themselves.
+    if not _ORT_EXCEPTIONS and "onnxruntime" in sys.modules:
+        _ORT_EXCEPTIONS = _ort_exception_types()
+    return _ORT_EXCEPTIONS
 
 BACKENDS = {
     "cpu": ["CPUExecutionProvider"],
@@ -39,6 +62,28 @@ BACKENDS = {
 }
 
 _gpu_libraries_preloaded = set()
+
+
+def session_creation_message(model_path: str, backend: str, trt_fp16: bool = False) -> str:
+    """Describe the session that is about to be created, including TRT cache state."""
+    if backend != "trt":
+        return f"Creating ONNX Runtime session (backend={backend}) …"
+
+    precision = "fp16" if trt_fp16 else "fp32"
+    cache_dir = Path(model_path).parent / f"trt_engine_cache_{precision}"
+    has_cache = cache_dir.exists() and any(cache_dir.glob("*.engine"))
+    if has_cache:
+        cache_state = f"TensorRT engine cache found: {cache_dir}"
+    else:
+        cache_state = "no TensorRT engine cache found; compilation may take several minutes"
+    return f"Creating ONNX Runtime session (backend=trt, precision={precision}, {cache_state}) …"
+
+
+def build_only_completion_message(backend: str) -> str:
+    """Return an accurate completion message for ``--build-engine-only``."""
+    if backend == "trt":
+        return "TensorRT engine cache ready. Exiting."
+    return f"ONNX Runtime session ready (backend={backend}; no engine cache required). Exiting."
 
 
 def _preload_gpu_libraries(backend: str) -> None:
@@ -56,12 +101,14 @@ def _preload_gpu_libraries(backend: str) -> None:
     if backend not in ("cuda", "trt"):
         return
 
+    ort_module = _load_ort()
+
     # CUDA 12 + cuDNN 9 — ONNX Runtime's official cross-platform preloader.
     if "cuda_cudnn" not in _gpu_libraries_preloaded:
         _gpu_libraries_preloaded.add("cuda_cudnn")
-        if hasattr(ort, "preload_dlls"):
+        if hasattr(ort_module, "preload_dlls"):
             try:
-                ort.preload_dlls()
+                ort_module.preload_dlls()
             except Exception:
                 pass
 
@@ -93,13 +140,17 @@ def create_session(
     model_path: str,
     backend: str = "cpu",
     trt_fp16: bool = False,
-) -> ort.InferenceSession:
+) -> Any:
     """Create an ONNX Runtime session with the appropriate providers."""
+    try:
+        ort_module = _load_ort()
+    except (ImportError, OSError) as exc:
+        raise SessionError("failed to import ONNX Runtime") from exc
     _preload_gpu_libraries(backend)
     providers = BACKENDS[backend]
-    opts = ort.SessionOptions()
+    opts = ort_module.SessionOptions()
     opts.log_severity_level = 3
-    ort.set_default_logger_severity(3)
+    ort_module.set_default_logger_severity(3)
 
     provider_options: list = []
     for prov in providers:
@@ -119,31 +170,36 @@ def create_session(
             provider_options.append({})
 
     try:
-        session = ort.InferenceSession(
+        session = ort_module.InferenceSession(
             model_path,
             sess_options=opts,
             providers=providers,
             provider_options=provider_options,
         )
-    except (*_ORT_EXCEPTIONS, OSError) as exc:
+    except (*ort_exception_types(), OSError) as exc:
         # Expected operational failures: malformed/missing model, provider unavailable,
         # driver/engine mismatch. Programming bugs are left to propagate (-> EXIT_RUNTIME). The
         # message stays sober (backend only, no raw cause) — the cause is chained for the logs.
         raise SessionError(f"failed to create ONNX Runtime session (backend={backend})") from exc
     actual = session.get_providers()
     logger.info(f"      ONNX Runtime providers: {actual}")
+    requested = providers[0]
+    if requested not in actual:
+        raise SessionError(
+            f"requested backend provider is unavailable (backend={backend}, provider={requested})"
+        )
     return session
 
 
 def run_inference(
-    session: ort.InferenceSession,
+    session: Any,
     input_array: np.ndarray,
     anchors_batch: np.ndarray,
 ) -> list:
     """Run ONNX inference and return raw outputs."""
     try:
         return session.run(None, {"images": input_array, "anchors": anchors_batch})
-    except _ORT_EXCEPTIONS as exc:
+    except ort_exception_types() as exc:
         # Expected ORT execution failures (GPU OOM, engine incompatibility, invalid binding).
         # Bugs on our side are left to propagate as EXIT_RUNTIME rather than masked here.
         raise InferenceError("ONNX inference failed") from exc

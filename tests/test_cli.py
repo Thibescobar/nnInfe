@@ -1,6 +1,8 @@
+import argparse
+
 import pytest
 
-from nninfe.common.cli import collect_image_inputs
+from nninfe.common.cli import DefaultsHelpFormatter, collect_image_inputs
 from nninfe.common.errors import EXIT_USAGE
 
 
@@ -49,6 +51,19 @@ def test_collect_empty_dir_exits(tmp_path, capsys):
     with pytest.raises(SystemExit) as exc:
         collect_image_inputs(image_dir=str(empty))
     _assert_usage_exit(exc, capsys, "no NIfTI files or DICOM series directories")
+
+
+def test_help_formatter_uses_actual_concrete_defaults():
+    parser = argparse.ArgumentParser(formatter_class=DefaultsHelpFormatter)
+    parser.add_argument("--overlap", type=float, default=0.5, help="Patch overlap")
+    parser.add_argument("--optional", default=None, help="Optional value")
+    parser.add_argument("--feature", action="store_true", help="Enable feature")
+
+    help_text = parser.format_help()
+
+    assert "Patch overlap (default: 0.5)" in help_text
+    assert "Optional value (default: None)" not in help_text
+    assert "Enable feature (default: False)" not in help_text
 
 
 def test_collect_valid_dir_nifti(tmp_path):
