@@ -14,15 +14,28 @@ COPY nninfe/ nninfe/
 # `gpu` extra = onnxruntime-gpu + CUDA 12 / cuDNN 9 wheels + tensorrt-cu12<11 (same as bare metal).
 RUN pip install ".[gpu]"
 
-# Slim the install (this is what keeps the image small — see the "Docker images" section in the README):
-#  - TensorRT builder resources: keep ONLY the PTX/JIT resource; drop every per-arch (sm*)
-#    and Windows (win_*) resource. TensorRT JIT-compiles the engine from PTX for whatever
-#    GPU it runs on, so the image stays portable across NVIDIA archs. This removes ~5 GB.
+# Slim the install (see the "Docker images" section in the README):
+#  - TensorRT builder resources: keep every Linux GPU architecture by default so a fresh engine
+#    can be compiled on any supported GPU. The PTX/JIT resource alone is NOT sufficient for every
+#    TensorRT/GPU pair (TensorRT 10.16.1 requires the native sm89 resource on Ada, for example).
+#    Set TENSORRT_TARGET_SM=sm89 (or another smNN value) to retain only that architecture and make
+#    a smaller, machine-specific image. Windows resources are never useful in this Linux image.
 #  - Strip debug symbols; drop headers, static libs, bytecode and type stubs (runtime-useless).
+ARG TENSORRT_TARGET_SM=all
 RUN set -eux; \
     SP="$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"; \
-    rm -f "$SP"/tensorrt_libs/libnvinfer_builder_resource_sm* \
-          "$SP"/tensorrt_libs/libnvinfer_builder_resource_win_*; \
+    TRT_LIBS="$SP/tensorrt_libs"; \
+    rm -f "$TRT_LIBS"/libnvinfer_builder_resource_win_*; \
+    case "$TENSORRT_TARGET_SM" in \
+      all) ;; \
+      sm[0-9][0-9]|sm[0-9][0-9][0-9]) \
+        set -- "$TRT_LIBS"/libnvinfer_builder_resource_"$TENSORRT_TARGET_SM".so.*; \
+        [ -e "$1" ] || { echo "TensorRT builder resource not found for TENSORRT_TARGET_SM=$TENSORRT_TARGET_SM" >&2; exit 1; }; \
+        find "$TRT_LIBS" -maxdepth 1 -type f -name 'libnvinfer_builder_resource_sm*.so*' \
+          ! -name "libnvinfer_builder_resource_${TENSORRT_TARGET_SM}.so*" -delete; \
+        ;; \
+      *) echo "TENSORRT_TARGET_SM must be 'all' or an smNN value (got '$TENSORRT_TARGET_SM')" >&2; exit 1 ;; \
+    esac; \
     find "$SP" -name '*.so*' -type f -exec strip --strip-unneeded {} + 2>/dev/null || true; \
     find "$SP" -type d -name include -exec rm -rf {} + 2>/dev/null || true; \
     find "$SP" -name '*.a' -delete; \
@@ -54,6 +67,6 @@ COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/pytho
 COPY --from=builder /usr/local/bin/nninfe-det /usr/local/bin/nninfe-seg /usr/local/bin/
 
 # create_session() preloads the CUDA/cuDNN/TensorRT libraries in-process (ORT's preload_dlls()
-# for CUDA + cuDNN, and RUNPATH resolution for TensorRT's PTX builder resource), so no
+# for CUDA + cuDNN, and RUNPATH resolution for TensorRT's builder resources), so no
 # LD_LIBRARY_PATH or activation script is required — verified via `docker run --gpus all`.
 CMD ["nninfe-det", "--help"]
