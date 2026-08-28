@@ -130,7 +130,23 @@ docker run --rm --gpus all nninfe-trt nninfe-det --backend trt --trt-fp16 \
   --image-path /data/img.nii.gz --output-dir /data/out
 ```
 
-**GPU image size.** `Dockerfile.trt` keeps the current versions (onnxruntime-gpu 1.23.x, TensorRT 10.16) but is slimmed in a multi-stage build: it keeps only TensorRT's **PTX/JIT builder resource** — dropping the per-arch `sm*` and Windows `win_*` resources (TensorRT JIT-compiles the engine for whatever GPU it runs on) — then strips debug symbols and drops headers, static libs and bytecode. Result: **~8 GB** (from ~17 GB unslimmed), still portable across NVIDIA architectures, with both `cuda` and `trt` working.
+**GPU image size and portability.** `Dockerfile.trt` keeps the current versions (onnxruntime-gpu
+1.23.x, TensorRT 10.16) and, by default, retains TensorRT's Linux builder resource for every supported
+GPU architecture. This is required for portable *engine compilation*: the generic PTX/JIT resource
+alone is not sufficient for every pair (TensorRT 10.16.1 requests `sm89` explicitly on Ada, for
+example). Windows resources, debug symbols, headers, static libraries and bytecode are still removed.
+
+For a smaller image tied to one GPU architecture, retain only its builder resource. An Ada GPU whose
+compute capability is 8.9 uses `sm89`:
+
+```bash
+nvidia-smi --query-gpu=name,compute_cap --format=csv,noheader
+docker build --build-arg TENSORRT_TARGET_SM=sm89 -f Dockerfile.trt -t nninfe-trt .
+```
+
+The targeted image can compile and reuse TensorRT engines on that architecture, but it is deliberately
+not portable to a GPU requiring another `smNN` resource. Omitting the build argument produces the
+larger portable image.
 
 > **Opt-in `--build-arg SLIM_CUDNN=1` (→ ~6.5 GB).** Additionally drops cuDNN's precompiled + advanced kernels. In the `trt` path convolutions run *inside* TensorRT, so cuDNN is unused — **but** the `cuda` backend routes convolutions through cuDNN and would break on a conv model. Use it **only** for TensorRT-only deployments, and validate with your own model first.
 
