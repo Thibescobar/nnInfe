@@ -52,6 +52,7 @@ The full license text governs these permissions. Dependencies and model weights 
 ## Table of Contents
 
 - [License](#license)
+
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
